@@ -297,7 +297,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                                 </Border>
                                 <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="12,10" Margin="0,0,0,5" BorderBrush="{StaticResource Bdr}" BorderThickness="1">
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="xIcoWinget" Text="A" Foreground="{StaticResource Blu}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="xIcoWinget" Text="A" Foreground="{StaticResource Acc}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock x:Name="xWinget" Foreground="{StaticResource Fg}" FontSize="12"/><TextBlock x:Name="xWingetD" Foreground="{StaticResource FgMute}" FontSize="9.5"/></StackPanel>
                                         <ToggleButton x:Name="xTglWinget" Grid.Column="2" Style="{StaticResource Sw}" IsChecked="True" VerticalAlignment="Center"/>
                                     </Grid>
@@ -333,7 +333,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                             </StackPanel>
                         </ScrollViewer>
 
-                        <Border Grid.Row="2" Background="#070C12" CornerRadius="10" Padding="10" Margin="0,6,0,0" BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+                        <Border Grid.Row="2" Background="#0c0c12" CornerRadius="10" Padding="10" Margin="0,6,0,0" BorderBrush="{StaticResource Bdr}" BorderThickness="1">
                             <StackPanel>
                                 <TextBlock x:Name="xEnvLbl" Foreground="{StaticResource FgDim}" FontSize="10" FontWeight="SemiBold"/>
                                 <TextBlock x:Name="xEnvInfo" Foreground="{StaticResource FgMute}" FontSize="9" TextWrapping="Wrap" Margin="0,3,0,0"/>
