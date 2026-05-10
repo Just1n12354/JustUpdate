@@ -612,6 +612,10 @@ function Set-ModIcon([string]$id, [string]$state) {
                 $ico.Text = [string][char]0x2713
                 $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#22C55E")
             }
+            "warn" {
+                $ico.Text = "!"
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#e8a020")
+            }
             "err"  {
                 $ico.Text = "X"
                 $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#EF4444")
@@ -622,7 +626,7 @@ function Set-ModIcon([string]$id, [string]$state) {
             }
         }
         $ico.Foreground = $brush
-        # Bei "default" bleibt der Text-Block in Standard-Fg (weiss/grau), nicht rot:
+        # Bei "default" bleibt der Text-Block in Standard-Fg (weiss/grau), sonst Status-Farbe:
         if ($txt) {
             if ($state -eq "default" -or [string]::IsNullOrEmpty($state)) {
                 $txt.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#ededf2")
@@ -775,7 +779,7 @@ function Start-Maintenance {
         Done           = $false
         Lines          = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
         Progress       = 0
-        Module         = ""
+        ModuleQueue    = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
         Results        = [hashtable]::Synchronized(@{})
         ClosedAppCount = $script:ClosedAppCount
     })
@@ -800,12 +804,17 @@ function Start-Maintenance {
             $sync.Lines.Add($line) | Out-Null
         }
         function P($v) { $sync.Progress = [Math]::Min(100, [int]$v) }
-        function M($id,$s) { $sync.Module = "$id|$s" }
+        # Queue statt Single-Slot - sonst gehen schnelle Statuswechsel verloren wenn ein
+        # Modul kuerzer als ein UI-Tick (150ms) braucht (z.B. Restore wenn schnell, Defender
+        # wenn schon up-to-date). Vorher: $sync.Module = "id|state" wurde vom naechsten Modul
+        # ueberschrieben bevor der UI-Timer "ok" -> Gruen anzeigen konnte.
+        function M($id,$s) { [void]$sync.ModuleQueue.Add("$id|$s") }
         function IsStopped { $sync.Stop -eq $true }
         # Mark result: status = ok|warn|err, details = free-text summary
+        # UI: ok -> Gruen, warn -> Orange ("!"), err -> Rot+X
         function Mark($id, $status, $details) {
             $sync.Results[$id] = @{ Status = $status; Details = $details }
-            $uiState = switch ($status) { "ok" { "ok" } "warn" { "ok" } default { "err" } }
+            $uiState = switch ($status) { "ok" { "ok" } "warn" { "warn" } default { "err" } }
             M $id $uiState
         }
 
@@ -1220,27 +1229,109 @@ function Start-Maintenance {
             L "  MODUL 6: Microsoft Store Apps"
             L "--------------------------------------------"
             try {
-                L "  Verbinde mit MDM App Management..."
-                $ns = "root\cimv2\mdm\dmmap"
-                $cls = "MDM_EnterpriseModernAppManagement_AppManagement01"
-                $obj = Get-CimInstance -Namespace $ns -ClassName $cls -ErrorAction Stop
-                L "  Starte Update-Scan fuer alle Store Apps..."
-                Invoke-CimMethod -InputObject $obj -MethodName "UpdateScanMethod" -ErrorAction Stop | Out-Null
-                L "  [OK] Store-Update Scan erfolgreich gestartet"
-                L "  Updates werden im Hintergrund heruntergeladen und installiert"
-                L "  Hinweis: Store-Updates laufen asynchron - Endresultat ist nicht direkt verifizierbar"
-                Mark "Store" "warn" "Scan im Hintergrund gestartet (asynchron, nicht verifizierbar)"
-            } catch {
-                L "  MDM nicht verfuegbar: $($_.Exception.Message)"
-                L "  Oeffne Microsoft Store Updates-Seite..."
+                # Schritt 1: MDM-Scan triggern (signalisiert dem Store-Backend dass es Updates pruefen soll).
+                L "  Schritt 1/2: MDM Update-Scan triggern..."
+                $mdmOk = $false
                 try {
-                    Start-Process "ms-windows-store://downloadsandupdates" -ErrorAction Stop
-                    L "  [WARNUNG] Store-Seite geoeffnet - bitte manuell 'Alle aktualisieren' klicken"
-                    Mark "Store" "warn" "manueller Klick in Store noetig"
+                    $ns = "root\cimv2\mdm\dmmap"
+                    $cls = "MDM_EnterpriseModernAppManagement_AppManagement01"
+                    $obj = Get-CimInstance -Namespace $ns -ClassName $cls -ErrorAction Stop
+                    Invoke-CimMethod -InputObject $obj -MethodName "UpdateScanMethod" -ErrorAction Stop | Out-Null
+                    $mdmOk = $true
+                    L "    [OK] MDM-Scan getriggert"
                 } catch {
-                    L "  [FEHLER] Store konnte nicht geoeffnet werden"
-                    Mark "Store" "err" "Store nicht erreichbar"
+                    L "    [WARNUNG] MDM nicht verfuegbar: $($_.Exception.Message)"
                 }
+
+                # Schritt 2: WUA mit Microsoft-Store-Service-ID nutzen - das macht echtes Download+Install
+                # statt nur einen async Hintergrund-Hint. Service-ID 855E8A7C-...8289 = Microsoft Store.
+                L "  Schritt 2/2: Microsoft Store Service via WUA pruefen..."
+                $storeServiceId = "855E8A7C-ECB4-4CA3-B045-1DFA50104289"
+                $storeOk = $false
+                $installedCount = 0
+                $availableCount = 0
+                try {
+                    # Store-Service registrieren (idempotent - falls schon registriert)
+                    try {
+                        $svcMgr = New-Object -ComObject Microsoft.Update.ServiceManager
+                        $svcMgr.ClientApplicationID = "JustUpdate"
+                        $null = $svcMgr.AddService2($storeServiceId, 7, "")
+                    } catch {
+                        # 0x80240020 = bereits registriert, ignorieren
+                    }
+                    $storeSession = New-Object -ComObject Microsoft.Update.Session
+                    $storeSearcher = $storeSession.CreateUpdateSearcher()
+                    $storeSearcher.ServiceID = $storeServiceId
+                    $storeSearcher.SearchScope = 1   # MachineAndUser
+                    $storeSearcher.ServerSelection = 3  # ssOthers (= benutze ServiceID)
+                    L "    Suche Store-Updates ueber WUA..."
+                    $storeResult = $storeSearcher.Search("IsInstalled=0")
+                    $availableCount = $storeResult.Updates.Count
+
+                    if ($availableCount -eq 0) {
+                        L "    [OK] Keine Store-Updates verfuegbar - alle Apps aktuell"
+                        $storeOk = $true
+                    } else {
+                        L "    $availableCount Store-Update(s) gefunden:"
+                        $storeDl = New-Object -ComObject Microsoft.Update.UpdateColl
+                        foreach ($u in $storeResult.Updates) {
+                            L "      - $($u.Title)"
+                            if (-not $u.EulaAccepted) { try { $u.AcceptEula() | Out-Null } catch {} }
+                            if (-not $u.IsDownloaded) { $storeDl.Add($u) | Out-Null }
+                        }
+                        if ($storeDl.Count -gt 0) {
+                            L "    Lade $($storeDl.Count) Store-Update(s) herunter..."
+                            $sd = $storeSession.CreateUpdateDownloader()
+                            $sd.Updates = $storeDl
+                            $sdr = $sd.Download()
+                            if ($sdr.ResultCode -ne 2 -and $sdr.ResultCode -ne 3) {
+                                L "    [WARNUNG] Store-Download Code $($sdr.ResultCode)"
+                            }
+                        }
+                        $storeInst = New-Object -ComObject Microsoft.Update.UpdateColl
+                        foreach ($u in $storeResult.Updates) {
+                            if ($u.IsDownloaded) { $storeInst.Add($u) | Out-Null }
+                        }
+                        if ($storeInst.Count -gt 0) {
+                            L "    Installiere $($storeInst.Count) Store-Update(s)..."
+                            $si = $storeSession.CreateUpdateInstaller()
+                            $si.Updates = $storeInst
+                            $sir = $si.Install()
+                            for ($k = 0; $k -lt $storeInst.Count; $k++) {
+                                $r = $sir.GetUpdateResult($k)
+                                # 2 = Succeeded, 3 = SucceededWithErrors
+                                if ($r.ResultCode -eq 2 -or $r.ResultCode -eq 3) {
+                                    $installedCount++
+                                    L "      [OK] $($storeInst.Item($k).Title)"
+                                } else {
+                                    L "      [FEHLER] $($storeInst.Item($k).Title) (Code $($r.ResultCode))"
+                                }
+                            }
+                            if ($installedCount -eq $storeInst.Count) { $storeOk = $true }
+                        }
+                    }
+                } catch {
+                    L "    [WARNUNG] Store-WUA-Pfad fehlgeschlagen: $($_.Exception.Message)"
+                }
+
+                # Endbewertung: nur ok wenn WUA-Pfad echt etwas verifiziert hat (installiert oder nichts da).
+                if ($storeOk -and $installedCount -gt 0) {
+                    L "  [OK] $installedCount von $availableCount Store-Update(s) installiert"
+                    Mark "Store" "ok" "$installedCount Store-Updates installiert"
+                } elseif ($storeOk -and $availableCount -eq 0) {
+                    L "  [OK] Microsoft Store ist auf dem neuesten Stand"
+                    Mark "Store" "ok" "alle Store-Apps aktuell"
+                } elseif ($installedCount -gt 0) {
+                    Mark "Store" "warn" "$installedCount von $availableCount installiert"
+                } elseif ($mdmOk) {
+                    L "  [WARNUNG] WUA-Store-Pfad lieferte nichts - MDM-Scan laeuft asynchron weiter"
+                    Mark "Store" "warn" "nur MDM-Scan im Hintergrund"
+                } else {
+                    Mark "Store" "err" "weder WUA noch MDM verfuegbar"
+                }
+            } catch {
+                L "  [FEHLER] $($_.Exception.Message)"
+                Mark "Store" "err" $_.Exception.Message
             }
             $i++; P ($i / $total * 100)
             L ""
@@ -1592,10 +1683,15 @@ function Start-Maintenance {
         $pct = $s.Progress
         $pw = $e.xBar.Parent.ActualWidth
         if ($pw -gt 0) { $e.xBar.Width = [Math]::Max(0, $pw * $pct / 100) }
-        if ($s.Module -and $s.Module.Contains("|")) {
-            $parts = $s.Module -split "\|", 2
-            $s.Module = ""
-            Set-ModIcon $parts[0] $parts[1]
+        # Queue komplett abarbeiten - jeder Status wird angezeigt, kein Update geht verloren
+        while ($s.ModuleQueue.Count -gt 0) {
+            try {
+                $msg = [string]$s.ModuleQueue[0]
+                $s.ModuleQueue.RemoveAt(0)
+                if ([string]::IsNullOrEmpty($msg) -or -not $msg.Contains("|")) { continue }
+                $parts = $msg -split "\|", 2
+                Set-ModIcon $parts[0] $parts[1]
+            } catch { break }
         }
         if ($s.Done) { End-Session -completed }
     })
