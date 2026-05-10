@@ -1,4 +1,4 @@
-# Version: 2.4.3
+# Version: 2.4.4
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
