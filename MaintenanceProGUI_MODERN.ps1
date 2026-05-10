@@ -147,18 +147,20 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
         AllowsTransparency="True" Background="Transparent">
 
     <Window.Resources>
-        <SolidColorBrush x:Key="BgMain"    Color="#05090E"/>
-        <SolidColorBrush x:Key="BgPanel"   Color="#0A1018"/>
-        <SolidColorBrush x:Key="BgCard"    Color="#0F1923"/>
-        <SolidColorBrush x:Key="BgInput"   Color="#0B1219"/>
-        <SolidColorBrush x:Key="Bdr"       Color="#1A2E42"/>
-        <SolidColorBrush x:Key="Fg"        Color="#E8EDF3"/>
-        <SolidColorBrush x:Key="FgDim"     Color="#8899AA"/>
-        <SolidColorBrush x:Key="FgMute"    Color="#4A6075"/>
+        <SolidColorBrush x:Key="BgMain"    Color="#111118"/>
+        <SolidColorBrush x:Key="BgPanel"   Color="#18181f"/>
+        <SolidColorBrush x:Key="BgCard"    Color="#1f1f28"/>
+        <SolidColorBrush x:Key="BgInput"   Color="#25252f"/>
+        <SolidColorBrush x:Key="Bdr"       Color="#2a2a35"/>
+        <SolidColorBrush x:Key="Fg"        Color="#ededf2"/>
+        <SolidColorBrush x:Key="FgDim"     Color="#8888a0"/>
+        <SolidColorBrush x:Key="FgMute"    Color="#52526a"/>
+        <SolidColorBrush x:Key="Acc"       Color="#A3243B"/>
+        <SolidColorBrush x:Key="AccH"      Color="#bd2b46"/>
         <SolidColorBrush x:Key="Blu"       Color="#3B82F6"/>
         <SolidColorBrush x:Key="Grn"       Color="#22C55E"/>
         <SolidColorBrush x:Key="Rd"        Color="#EF4444"/>
-        <SolidColorBrush x:Key="Amb"       Color="#F59E0B"/>
+        <SolidColorBrush x:Key="Amb"       Color="#e8a020"/>
 
         <Style x:Key="Sw" TargetType="ToggleButton">
             <Setter Property="Width" Value="40"/>
@@ -167,12 +169,12 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="BgBd" CornerRadius="11" Background="#182838">
-                            <Ellipse x:Name="Dot" Width="16" Height="16" Fill="#4A6075" HorizontalAlignment="Left" Margin="3,0,0,0"/>
+                        <Border x:Name="BgBd" CornerRadius="11" Background="#2a2a35">
+                            <Ellipse x:Name="Dot" Width="16" Height="16" Fill="#52526a" HorizontalAlignment="Left" Margin="3,0,0,0"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="BgBd" Property="Background" Value="{StaticResource Blu}"/>
+                                <Setter TargetName="BgBd" Property="Background" Value="{StaticResource Acc}"/>
                                 <Setter TargetName="Dot" Property="Fill" Value="White"/>
                                 <Setter TargetName="Dot" Property="HorizontalAlignment" Value="Right"/>
                                 <Setter TargetName="Dot" Property="Margin" Value="0,0,3,0"/>
@@ -198,7 +200,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="#1A2E42"/>
+                                <Setter TargetName="B" Property="Background" Value="#25252f"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -207,7 +209,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
         </Style>
     </Window.Resources>
 
-    <Border CornerRadius="16" Background="{StaticResource BgMain}" BorderBrush="#0D1520" BorderThickness="1.5">
+    <Border CornerRadius="16" Background="{StaticResource BgMain}" BorderBrush="#0a0a10" BorderThickness="1.5">
         <Border.Effect>
             <DropShadowEffect BlurRadius="50" ShadowDepth="0" Opacity="0.55" Color="#000"/>
         </Border.Effect>
@@ -225,7 +227,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse Width="10" Height="10" Fill="{StaticResource Blu}" Margin="0,0,8,0"/>
+                    <Ellipse Width="10" Height="10" Fill="{StaticResource Acc}" Margin="0,0,8,0"/>
                     <TextBlock x:Name="xTitleBar" Text="System Maintenance Pro" Foreground="{StaticResource Fg}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
                 <DockPanel Grid.Column="1" LastChildFill="False">
