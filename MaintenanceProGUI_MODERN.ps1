@@ -1,4 +1,4 @@
-# Version: 2.4.0
+# Version: 2.4.1
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -259,6 +259,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     <Button x:Name="xClose" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="X" FontSize="12"/>
                     <Button x:Name="xMax" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="☐" FontSize="12"/>
                     <Button x:Name="xMin" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="_" FontSize="14"/>
+                    <Button x:Name="xInfo" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="i" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Acc}" Margin="0,0,4,0"/>
                     <ComboBox x:Name="xLang" DockPanel.Dock="Right" Width="90" Height="26" Margin="0,0,8,0"
                               Background="{StaticResource BgCard}" Foreground="{StaticResource FgDim}"
                               BorderBrush="{StaticResource Bdr}" BorderThickness="1" FontSize="11">
@@ -500,10 +501,41 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
 $reader = New-Object System.Xml.XmlNodeReader $xamlXml
 $Window = [Windows.Markup.XamlReader]::Load($reader)
 
+# App-Icon zur Laufzeit erzeugen (rotes Quadrat mit weissem J).
+# Kein .ico-File noetig - wird in-memory gerendert und an $Window.Icon gehaengt.
+try {
+    Add-Type -AssemblyName System.Drawing
+    $bmp = New-Object System.Drawing.Bitmap 64,64
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode    = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+    $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(163,36,59))
+    $g.FillRectangle($bg, 0, 0, 64, 64)
+    $font = New-Object System.Drawing.Font ("Segoe UI", 36, [System.Drawing.FontStyle]::Bold)
+    $fg   = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $sf   = New-Object System.Drawing.StringFormat
+    $sf.Alignment     = [System.Drawing.StringAlignment]::Center
+    $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $rect = New-Object System.Drawing.RectangleF 0,2,64,64
+    $g.DrawString("J", $font, $fg, $rect, $sf)
+    $g.Dispose(); $font.Dispose(); $bg.Dispose(); $fg.Dispose()
+    $ms = New-Object System.IO.MemoryStream
+    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    $ms.Position = 0
+    $bi = New-Object System.Windows.Media.Imaging.BitmapImage
+    $bi.BeginInit()
+    $bi.CacheOption  = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $bi.StreamSource = $ms
+    $bi.EndInit()
+    $bi.Freeze()
+    $Window.Icon = $bi
+    $bmp.Dispose()
+} catch {}
+
 # Get elements
 $e = @{}
 $allNames = @(
-    "TitleBar","xLang","xMin","xMax","xClose","xTitleBar",
+    "TitleBar","xLang","xMin","xMax","xClose","xInfo","xTitleBar",
     "xTag","xTitle","xDesc","xModHdr",
     "xRestore","xRestoreD","xIcoRestore","xTglRestore",
     "xDefender","xDefenderD","xIcoDefender","xTglDefender",
@@ -558,18 +590,44 @@ $script:IconElements = @{
     Restore=$e.xIcoRestore; Defender=$e.xIcoDefender; WinUpdate=$e.xIcoWinUpdate; Drivers=$e.xIcoDrivers
     Winget=$e.xIcoWinget; Store=$e.xIcoStore; Repair=$e.xIcoRepair; Network=$e.xIcoNetwork; Cleanup=$e.xIcoCleanup
 }
+# Text-Elemente der Module (links im Panel) - werden zusammen mit dem Icon umgefaerbt,
+# damit der User den Status auch am Wort und nicht nur am Buchstaben sieht.
+$script:TextElements = @{
+    Restore=$e.xRestore; Defender=$e.xDefender; WinUpdate=$e.xWinUpdate; Drivers=$e.xDrivers
+    Winget=$e.xWinget; Store=$e.xStoreApps; Repair=$e.xRepair; Network=$e.xNetwork; Cleanup=$e.xCleanup
+}
 
 function Set-ModIcon([string]$id, [string]$state) {
     $ico = $script:IconElements[$id]
+    $txt = $script:TextElements[$id]
     if (-not $ico) { return }
     $ico.Dispatcher.Invoke([Action]{
+        $brush = $null
         switch ($state) {
-            "run"  { $ico.Text = "..."; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#e8a020") }
-            "ok"   { $ico.Text = [string][char]0x2713; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#22C55E") }
-            "err"  { $ico.Text = "X"; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#EF4444") }
+            "run"  {
+                $ico.Text = "..."
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
+            }
+            "ok"   {
+                $ico.Text = [string][char]0x2713
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#22C55E")
+            }
+            "err"  {
+                $ico.Text = "X"
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#EF4444")
+            }
             default {
                 $ico.Text = $script:Icons[$id]
-                $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
+            }
+        }
+        $ico.Foreground = $brush
+        # Bei "default" bleibt der Text-Block in Standard-Fg (weiss/grau), nicht rot:
+        if ($txt) {
+            if ($state -eq "default" -or [string]::IsNullOrEmpty($state)) {
+                $txt.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#ededf2")
+            } else {
+                $txt.Foreground = $brush
             }
         }
     })
@@ -578,9 +636,13 @@ function Set-ModIcon([string]$id, [string]$state) {
 function Reset-AllIcons {
     foreach ($k in $script:Icons.Keys) {
         $ico = $script:IconElements[$k]
+        $txt = $script:TextElements[$k]
         if ($ico) {
             $ico.Text = $script:Icons[$k]
             $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
+        }
+        if ($txt) {
+            $txt.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#ededf2")
         }
     }
 }
@@ -801,27 +863,47 @@ function Start-Maintenance {
             L "--------------------------------------------"
             try {
                 if (Get-Command Update-MpSignature -ErrorAction SilentlyContinue) {
-                    # Aktuelle Version anzeigen
+                    # Aktuelle Version vor dem Update merken (fuer Verifikation)
+                    $defOldVer = $null
+                    $defOldTime = $null
                     try {
                         $defStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
                         if ($defStatus) {
+                            $defOldVer = $defStatus.AntivirusSignatureVersion
+                            $defOldTime = $defStatus.AntivirusSignatureLastUpdated
                             L "  Aktueller Status:"
-                            L "    Antivirus-Version:  $($defStatus.AntivirusSignatureVersion)"
-                            L "    Letztes Update:     $($defStatus.AntivirusSignatureLastUpdated)"
+                            L "    Antivirus-Version:  $defOldVer"
+                            L "    Letztes Update:     $defOldTime"
                             L "    Echtzeit-Schutz:    $(if($defStatus.RealTimeProtectionEnabled){'Aktiv'}else{'Inaktiv'})"
                         }
                     } catch {}
                     L "  Lade neueste Signaturen herunter..."
                     Update-MpSignature -ErrorAction Stop
-                    # Neue Version anzeigen
+                    # Verifikation: neue Version oder neuere Update-Zeit?
+                    $defNewVer = $null
+                    $defNewTime = $null
                     try {
                         $defNew = Get-MpComputerStatus -ErrorAction SilentlyContinue
                         if ($defNew) {
-                            L "  Neue Version:         $($defNew.AntivirusSignatureVersion)"
+                            $defNewVer = $defNew.AntivirusSignatureVersion
+                            $defNewTime = $defNew.AntivirusSignatureLastUpdated
+                            L "  Neue Version:         $defNewVer"
+                            L "  Neues Update-Datum:   $defNewTime"
                         }
                     } catch {}
-                    L "  [OK] Defender-Signaturen erfolgreich aktualisiert"
-                    Mark "Defender" "ok" "Signaturen aktualisiert"
+                    if ($defNewVer -and $defOldVer -and ($defNewVer -ne $defOldVer)) {
+                        L "  [OK] Defender-Signaturen erfolgreich aktualisiert (neu: $defNewVer)"
+                        Mark "Defender" "ok" "Signaturen aktualisiert ($defNewVer)"
+                    } elseif ($defNewTime -and $defOldTime -and ($defNewTime -gt $defOldTime)) {
+                        L "  [OK] Defender-Signaturen erfolgreich aktualisiert"
+                        Mark "Defender" "ok" "Signaturen aktualisiert"
+                    } elseif ($defNewVer -and $defOldVer -and ($defNewVer -eq $defOldVer)) {
+                        L "  [OK] Defender war bereits aktuell ($defNewVer)"
+                        Mark "Defender" "ok" "bereits aktuell"
+                    } else {
+                        L "  [WARNUNG] Update-Befehl lief durch, Verifikation aber nicht moeglich"
+                        Mark "Defender" "warn" "Status nicht verifizierbar"
+                    }
                 } else {
                     L "  [WARNUNG] Windows Defender ist auf diesem System nicht verfuegbar"
                     Mark "Defender" "warn" "Defender nicht verfuegbar"
@@ -1146,7 +1228,8 @@ function Start-Maintenance {
                 Invoke-CimMethod -InputObject $obj -MethodName "UpdateScanMethod" -ErrorAction Stop | Out-Null
                 L "  [OK] Store-Update Scan erfolgreich gestartet"
                 L "  Updates werden im Hintergrund heruntergeladen und installiert"
-                Mark "Store" "ok" "Scan im Hintergrund gestartet"
+                L "  Hinweis: Store-Updates laufen asynchron - Endresultat ist nicht direkt verifizierbar"
+                Mark "Store" "warn" "Scan im Hintergrund gestartet (asynchron, nicht verifizierbar)"
             } catch {
                 L "  MDM nicht verfuegbar: $($_.Exception.Message)"
                 L "  Oeffne Microsoft Store Updates-Seite..."
@@ -1542,7 +1625,7 @@ function End-Session {
                   elseif ($warn -gt 0) { "Wartung mit Warnungen beendet" }
                   else { T "Done" }
         if ($err -gt 0 -or $warn -gt 0) {
-            $msg += "`n`nDetails findest du im Log (Button 'LOG OEFFNEN')."
+            $msg += "`n`nDetails finden Sie im Log (Button 'LOG OEFFNEN')."
         }
         [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
     } else {
@@ -1556,6 +1639,80 @@ function End-Session {
 $e.xStart.Add_Click({ Start-Maintenance })
 $e.xStop.Add_Click({ End-Session })
 $e.xLog.Add_Click({ Start-Process notepad.exe "`"$($script:LogPath)`"" })
+
+$e.xInfo.Add_Click({
+    $infoMsg = @"
+JustUpdate haelt Ihren PC sauber und aktuell - mit einem einzigen Klick.
+
+WAS DIESE ANWENDUNG MACHT:
+
+1. Wiederherstellungspunkt
+   Erstellt vor allen Aenderungen einen Sicherungspunkt von Windows.
+   So koennen Sie bei Problemen wieder zum vorherigen Zustand zurueck.
+
+2. Defender aktualisieren
+   Laedt die neuesten Viren-Signaturen fuer den Windows-Virenschutz herunter.
+
+3. Windows Updates
+   Sucht nach offiziellen Microsoft-Updates fuer Windows und installiert diese.
+   (Treiber-Updates werden separat in Schritt 4 behandelt.)
+
+4. Treiber aktualisieren
+   Sucht ueber Windows Update nach neueren Geraete-Treibern (Drucker, Grafik, etc.)
+   und installiert diese.
+
+5. Apps aktualisieren (Winget)
+   Aktualisiert alle installierten Programme, die ueber den Windows-Paketmanager
+   (winget) bekannt sind - z.B. Browser, Office-Tools, Entwickler-Programme.
+
+6. Microsoft Store Apps
+   Stoesst die Aktualisierung aller Apps aus dem Microsoft Store an.
+   (Laeuft im Hintergrund weiter, deshalb als 'Warnung' markiert.)
+
+7. System-Reparatur
+   Pruefen die Systemdateien (SFC) und reparieren beschaedigte Komponenten (DISM).
+   Das ist die offizielle Microsoft-Methode bei Windows-Problemen.
+
+8. Netzwerk reparieren
+   Setzt DNS-Cache, Winsock und IP-Konfiguration zurueck.
+   Hilft bei Internet-Problemen. Standardmaessig deaktiviert.
+
+9. Bereinigung
+   Leert Papierkorb, DNS-Cache und temporaere Dateien aller Benutzer auf diesem PC.
+   Setzt den Thumbnail-Cache zurueck und gibt Speicher im Windows-Update-Ordner frei.
+
+ZUSAETZLICHE FUNKTIONEN:
+
+- Vor Updates fragt JustUpdate, ob alle offenen Programme geschlossen werden
+  sollen, damit sich Update-Installationen nicht an gesperrten Dateien aufhaengen.
+- Die Modul-Bezeichnungen links wechseln waehrend der Wartung die Farbe:
+  WEISS = noch nicht gestartet, ROT = laeuft gerade, GRUEN = erfolgreich abgeschlossen.
+- Alle Aktionen werden mitprotokolliert. Den letzten Log oeffnen Sie ueber 'LOG OEFFNEN'.
+- Es werden maximal die 10 neuesten Logs aufbewahrt, aeltere werden automatisch geloescht.
+
+WAS DIESE ANWENDUNG NICHT MACHT:
+
+- JustUpdate installiert keine Programme, die noch nicht auf Ihrem PC sind.
+- JustUpdate verschickt keine Daten ins Internet (ausser fuer den Update-Download
+  von Microsoft direkt) und sammelt keine persoenlichen Informationen.
+- JustUpdate aendert keine persoenlichen Dateien (Dokumente, Bilder, Videos).
+- JustUpdate ueberschreibt keine eigenen Einstellungen wie Hintergrundbild,
+  Browser-Favoriten oder installierte Programme.
+- Die Bereinigung loescht nur temporaere Dateien, die aelter als drei Tage sind -
+  keine eigenen Dokumente, Downloads oder Programmdaten.
+
+WICHTIGE HINWEISE:
+
+- Bitte lassen Sie den PC waehrend der Wartung eingeschaltet.
+- Manche Updates verlangen einen Neustart - JustUpdate weist Sie darauf hin.
+- Fuer alle Module sind Administratorrechte noetig (wird automatisch angefragt).
+- Bei Fragen oder Problemen oeffnen Sie das Log und schicken den Inhalt an Ihre
+  IT-Person oder an Justin (info@itintechsolutions.ch).
+
+Vielen Dank, dass Sie JustUpdate verwenden!
+"@
+    [System.Windows.MessageBox]::Show($infoMsg, "Info - Was macht JustUpdate?", "OK", "Information") | Out-Null
+})
 
 # =====================================================================
 # RUN
