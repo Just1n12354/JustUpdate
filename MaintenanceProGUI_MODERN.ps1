@@ -1,4 +1,4 @@
-# Version: 2.3.7
+# Version: 2.4.0
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -355,13 +355,13 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     <Border Grid.Row="0" CornerRadius="14" Margin="0,0,0,8" BorderBrush="{StaticResource Bdr}" BorderThickness="1" Padding="22,18">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#0A1420" Offset="0"/>
-                                <GradientStop Color="#101E30" Offset="0.5"/>
-                                <GradientStop Color="#0A1828" Offset="1"/>
+                                <GradientStop Color="#1a1018" Offset="0"/>
+                                <GradientStop Color="#241522" Offset="0.5"/>
+                                <GradientStop Color="#1a1018" Offset="1"/>
                             </LinearGradientBrush>
                         </Border.Background>
                         <StackPanel>
-                            <TextBlock x:Name="xTag" Foreground="{StaticResource Blu}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,3"/>
+                            <TextBlock x:Name="xTag" Foreground="{StaticResource Acc}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,3"/>
                             <TextBlock x:Name="xTitle" Foreground="{StaticResource Fg}" FontSize="22" FontWeight="Bold"/>
                             <TextBlock x:Name="xDesc" Foreground="{StaticResource FgDim}" FontSize="11.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
                         </StackPanel>
@@ -382,8 +382,8 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                                     <Border x:Name="B" CornerRadius="12">
                                         <Border.Background>
                                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                                <GradientStop Color="#3B82F6" Offset="0"/>
-                                                <GradientStop Color="#2563EB" Offset="1"/>
+                                                <GradientStop Color="#A3243B" Offset="0"/>
+                                                <GradientStop Color="#bd2b46" Offset="1"/>
                                             </LinearGradientBrush>
                                         </Border.Background>
                                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -399,7 +399,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                         <Button x:Name="xStop" Grid.Column="2" Height="48" Foreground="White" FontSize="12" FontWeight="SemiBold" IsEnabled="False" Cursor="Hand">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
-                                    <Border x:Name="B" CornerRadius="12" Background="#7F1D1D">
+                                    <Border x:Name="B" CornerRadius="12" Background="#5a1521">
                                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
                                     <ControlTemplate.Triggers>
@@ -427,12 +427,12 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <Border CornerRadius="4" Background="#0F1923" Height="6">
+                        <Border CornerRadius="4" Background="#1f1f28" Height="6">
                             <Border x:Name="xBar" CornerRadius="4" HorizontalAlignment="Left" Width="0">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                        <GradientStop Color="#3B82F6" Offset="0"/>
-                                        <GradientStop Color="#06B6D4" Offset="1"/>
+                                        <GradientStop Color="#A3243B" Offset="0"/>
+                                        <GradientStop Color="#bd2b46" Offset="1"/>
                                     </LinearGradientBrush>
                                 </Border.Background>
                             </Border>
@@ -444,7 +444,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     </Grid>
 
                     <!-- Log -->
-                    <Border Grid.Row="3" Background="#070C12" CornerRadius="14" BorderBrush="{StaticResource Bdr}" BorderThickness="1" MinHeight="200">
+                    <Border Grid.Row="3" Background="#0c0c12" CornerRadius="14" BorderBrush="{StaticResource Bdr}" BorderThickness="1" MinHeight="200">
                         <Grid Margin="14">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -452,7 +452,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                             </Grid.RowDefinitions>
                             <TextBlock x:Name="xLogHdr" Foreground="{StaticResource Fg}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8"/>
                             <TextBox x:Name="xLogBox" Grid.Row="1"
-                                     Background="Transparent" Foreground="#98B0C8"
+                                     Background="Transparent" Foreground="#b8b8d0"
                                      FontFamily="Consolas" FontSize="10.5"
                                      IsReadOnly="True" BorderThickness="0"
                                      VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/>
@@ -463,7 +463,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
             </ScrollViewer>
 
             <!-- FOOTER -->
-            <TextBlock x:Name="xFooter" Grid.Row="2" Foreground="#3A4E62" FontSize="9" Margin="20,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="xFooter" Grid.Row="2" Foreground="#52526a" FontSize="9" Margin="20,0" VerticalAlignment="Center"/>
         </Grid>
     </Border>
 </Window>
@@ -539,12 +539,12 @@ function Set-ModIcon([string]$id, [string]$state) {
     if (-not $ico) { return }
     $ico.Dispatcher.Invoke([Action]{
         switch ($state) {
-            "run"  { $ico.Text = "..."; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#F59E0B") }
+            "run"  { $ico.Text = "..."; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#e8a020") }
             "ok"   { $ico.Text = [string][char]0x2713; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#22C55E") }
             "err"  { $ico.Text = "X"; $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#EF4444") }
             default {
                 $ico.Text = $script:Icons[$id]
-                $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#3B82F6")
+                $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
             }
         }
     })
@@ -555,7 +555,7 @@ function Reset-AllIcons {
         $ico = $script:IconElements[$k]
         if ($ico) {
             $ico.Text = $script:Icons[$k]
-            $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#3B82F6")
+            $ico.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#A3243B")
         }
     }
 }
