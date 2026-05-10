@@ -1,4 +1,4 @@
-# Version: 2.4.4
+# Version: 2.4.5
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -1187,19 +1187,36 @@ function Start-Maintenance {
                     $psi.CreateNoWindow = $true
                     $proc = [System.Diagnostics.Process]::Start($psi)
 
+                    # Output zusaetzlich sammeln fuer Result-Analyse (Empty-Detection)
+                    $wgUpgradeOutput = New-Object System.Collections.Generic.List[string]
                     while (-not $proc.StandardOutput.EndOfStream) {
                         $l = $proc.StandardOutput.ReadLine()
                         if ($l -and $l.Trim().Length -gt 1) {
+                            $wgUpgradeOutput.Add($l.Trim())
                             L "    $($l.Trim())"
                         }
                     }
                     $proc.WaitForExit()
 
                     $exitCode = $proc.ExitCode
+                    # winget gibt bei "nichts zu tun" haeufig Exit 0 zurueck mit Sprach-Meldung
+                    # "Es wurde kein installiertes Paket gefunden" (DE) / "No installed package" (EN) /
+                    # "Aucun package installe" (FR). Dann ist nichts aktualisiert worden.
+                    $combined = ($wgUpgradeOutput -join " ")
+                    $nothingToDo = $combined -match 'kein installiertes Paket|No installed package|Aucun package install'
+                    $installedAny = $combined -match 'Successfully installed|Erfolgreich installiert|Installation reussie'
                     L ""
                     if ($exitCode -eq 0) {
-                        L "  [OK] Alle Apps erfolgreich aktualisiert"
-                        Mark "Winget" "ok" "Apps aktualisiert"
+                        if ($nothingToDo -and -not $installedAny) {
+                            L "  [OK] Keine App-Updates verfuegbar - alle Apps aktuell"
+                            Mark "Winget" "ok" "keine Updates verfuegbar"
+                        } elseif ($installedAny) {
+                            L "  [OK] Apps erfolgreich aktualisiert"
+                            Mark "Winget" "ok" "Apps aktualisiert"
+                        } else {
+                            L "  [OK] Winget-Lauf abgeschlossen"
+                            Mark "Winget" "ok" "Lauf abgeschlossen"
+                        }
                     } elseif ($exitCode -eq -1978335189) {
                         L "  [OK] Keine Updates verfuegbar - alle Apps aktuell"
                         Mark "Winget" "ok" "alle Apps aktuell"
