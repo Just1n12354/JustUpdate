@@ -269,14 +269,14 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                                 <!-- Each module card -->
                                 <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="12,10" Margin="0,0,0,5" BorderBrush="{StaticResource Bdr}" BorderThickness="1">
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="xIcoRestore" Text="R" Foreground="{StaticResource Blu}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="xIcoRestore" Text="R" Foreground="{StaticResource Acc}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock x:Name="xRestore" Foreground="{StaticResource Fg}" FontSize="12"/><TextBlock x:Name="xRestoreD" Foreground="{StaticResource FgMute}" FontSize="9.5"/></StackPanel>
                                         <ToggleButton x:Name="xTglRestore" Grid.Column="2" Style="{StaticResource Sw}" IsChecked="True" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Border>
                                 <Border Background="{StaticResource BgCard}" CornerRadius="10" Padding="12,10" Margin="0,0,0,5" BorderBrush="{StaticResource Bdr}" BorderThickness="1">
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="xIcoDefender" Text="D" Foreground="{StaticResource Blu}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="xIcoDefender" Text="D" Foreground="{StaticResource Acc}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock x:Name="xDefender" Foreground="{StaticResource Fg}" FontSize="12"/><TextBlock x:Name="xDefenderD" Foreground="{StaticResource FgMute}" FontSize="9.5"/></StackPanel>
                                         <ToggleButton x:Name="xTglDefender" Grid.Column="2" Style="{StaticResource Sw}" IsChecked="True" VerticalAlignment="Center"/>
                                     </Grid>
