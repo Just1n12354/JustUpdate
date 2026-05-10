@@ -67,10 +67,29 @@ Add-Type -AssemblyName WindowsBase
 # PATHS
 # =====================================================================
 $BaseDir = Split-Path -Parent $ScriptPath
-$LogDir  = Join-Path $env:APPDATA "JustUpdate\logs"
-if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+# Log-Ordner liegt neben dem Script/Exe (relativ, nicht hardcoded auf Program Files).
+# Fallback auf APPDATA falls App-Ordner schreibgeschuetzt ist (z.B. portable von Read-Only-Medium).
+$LogDir = Join-Path $BaseDir "logs"
+try {
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null }
+    # Schreibtest
+    $probe = Join-Path $LogDir ".write_probe"
+    "" | Out-File -FilePath $probe -Encoding utf8 -ErrorAction Stop
+    Remove-Item $probe -Force -ErrorAction SilentlyContinue
+} catch {
+    $LogDir = Join-Path $env:APPDATA "JustUpdate\logs"
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+}
 $script:LogPath = Join-Path $LogDir ("Maintenance_{0}.log" -f (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"))
 "" | Out-File -FilePath $script:LogPath -Encoding utf8
+
+# Log-Rotation: max 10 Logs behalten, aeltere loeschen
+try {
+    Get-ChildItem -Path $LogDir -Filter "Maintenance_*.log" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 10 |
+        ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+} catch {}
 
 # =====================================================================
 # TRANSLATIONS
@@ -93,6 +112,8 @@ $script:TR = @{
         Network="Netzwerk reparieren"; NetworkD="DNS, Winsock, IP Reset"
         Cleanup="Bereinigung"; CleanupD="Temp, Cache, Papierkorb"
         Env="System"
+        CloseAppsTitle="Apps vor Update schliessen?"
+        CloseAppsMsg="Vor Windows-Updates und Store-Updates sollten alle offenen Programme geschlossen werden, damit sich keine Update-Installation an gesperrten Dateien aufhaengt.`n`nJetzt alle laufenden Programme schliessen?`n`nWICHTIG: Ungespeicherte Daten gehen verloren!"
     }
     "en" = @{
         Title="System Maintenance Pro"; Tag="All-in-One PC Maintenance"
@@ -111,6 +132,8 @@ $script:TR = @{
         Network="Repair Network"; NetworkD="DNS, Winsock, IP reset"
         Cleanup="Cleanup"; CleanupD="Temp, cache, recycle bin"
         Env="System"
+        CloseAppsTitle="Close apps before updating?"
+        CloseAppsMsg="Before Windows Updates and Store updates, all open applications should be closed so update installations don't get stuck on locked files.`n`nClose all running applications now?`n`nWARNING: Unsaved data will be lost!"
     }
     "fr" = @{
         Title="Maintenance Systeme Pro"; Tag="Maintenance PC tout-en-un"
@@ -129,6 +152,8 @@ $script:TR = @{
         Network="Reparer reseau"; NetworkD="Reset DNS, Winsock, IP"
         Cleanup="Nettoyage"; CleanupD="Temp, cache, corbeille"
         Env="Systeme"
+        CloseAppsTitle="Fermer les apps avant la mise a jour?"
+        CloseAppsMsg="Avant les mises a jour Windows et Store, toutes les applications ouvertes doivent etre fermees pour eviter les blocages sur des fichiers verrouilles.`n`nFermer toutes les applications en cours maintenant?`n`nATTENTION: Les donnees non enregistrees seront perdues!"
     }
 }
 $script:Lang = "de"
@@ -614,7 +639,51 @@ $script:UITimer    = $null
 $script:ClockTimer = $null
 $script:StartTime  = $null
 
+function Close-RunningUserApps {
+    # Schliesst alle GUI-Prozesse mit Hauptfenster — sanft via CloseMainWindow().
+    # Ausgenommen: System-Prozesse, Shell, JustUpdate selbst.
+    $whitelist = @(
+        "explorer","dwm","conhost","powershell","pwsh","cmd","WindowsTerminal",
+        "wininit","winlogon","csrss","smss","services","lsass","svchost",
+        "fontdrvhost","SearchHost","StartMenuExperienceHost","ShellExperienceHost",
+        "TextInputHost","RuntimeBroker","ApplicationFrameHost","SecurityHealthSystray"
+    )
+    $myPid = $PID
+    $closed = 0
+    Get-Process | Where-Object {
+        $_.Id -ne $myPid -and
+        $_.MainWindowHandle -ne 0 -and
+        $whitelist -notcontains $_.ProcessName
+    } | ForEach-Object {
+        try {
+            [void]$_.CloseMainWindow()
+            $closed++
+        } catch {}
+    }
+    # Kurz warten, damit Apps ihre "Speichern?"-Dialoge anzeigen koennen
+    Start-Sleep -Seconds 2
+    return $closed
+}
+
 function Start-Maintenance {
+    # Vor Update-Modulen: User fragen, ob laufende Apps geschlossen werden sollen.
+    # Verhindert dass Update-Installer sich an gesperrten Dateien aufhaengen.
+    $needsClose = ([bool]$e.xTglWinUpdate.IsChecked) -or ([bool]$e.xTglStore.IsChecked)
+    if ($needsClose) {
+        $answer = [System.Windows.MessageBox]::Show(
+            (T "CloseAppsMsg"),
+            (T "CloseAppsTitle"),
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($answer -eq [System.Windows.MessageBoxResult]::Yes) {
+            $script:ClosedAppCount = Close-RunningUserApps
+        } else {
+            $script:ClosedAppCount = -1
+        }
+    } else {
+        $script:ClosedAppCount = $null
+    }
+
     Reset-AllIcons
     $e.xLogBox.Clear()
     $e.xBar.Width = 0
@@ -638,14 +707,15 @@ function Start-Maintenance {
     }
 
     $sync = [hashtable]::Synchronized(@{
-        Config   = $cfg
-        LogPath  = $script:LogPath
-        Stop     = $false
-        Done     = $false
-        Lines    = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
-        Progress = 0
-        Module   = ""
-        Results  = [hashtable]::Synchronized(@{})
+        Config         = $cfg
+        LogPath        = $script:LogPath
+        Stop           = $false
+        Done           = $false
+        Lines          = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
+        Progress       = 0
+        Module         = ""
+        Results        = [hashtable]::Synchronized(@{})
+        ClosedAppCount = $script:ClosedAppCount
     })
     $script:SyncHash = $sync
 
@@ -690,6 +760,14 @@ function Start-Maintenance {
         L "  $(Get-Date -F 'dd.MM.yyyy HH:mm:ss')"
         L "============================================"
         L ""
+        if ($null -ne $sync.ClosedAppCount) {
+            if ($sync.ClosedAppCount -ge 0) {
+                L "  Vor-Update-Schritt: $($sync.ClosedAppCount) laufende Programm(e) geschlossen"
+            } else {
+                L "  Vor-Update-Schritt: User hat das Schliessen abgelehnt - Updates koennen an gesperrten Dateien scheitern"
+            }
+            L ""
+        }
 
         # ── RESTORE POINT ──
         if ($cfg.Restore) {
@@ -1260,24 +1338,34 @@ function Start-Maintenance {
                 & ipconfig /flushdns 2>&1 | Out-Null
                 L "    [OK] DNS-Cache geleert"
 
-                # Temp Dateien
+                # Temp Dateien (alle User-Profile + System-Temp)
+                # Iteriert C:\Users\*\AppData\Local\Temp dynamisch — keine Hardcoded-Usernames.
                 L "  Schritt 3/5: Temporaere Dateien entfernen..."
                 $removed = 0
                 $freedMB = 0
-                @($env:TEMP, "C:\Windows\Temp") | ForEach-Object {
-                    $dir = $_
-                    if (Test-Path $dir) {
-                        L "    Durchsuche: $dir"
-                        Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue |
-                            Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt (Get-Date).AddDays(-3) } |
-                            ForEach-Object {
-                                try {
-                                    $freedMB += $_.Length / 1MB
-                                    Remove-Item $_.FullName -Force -ErrorAction Stop
-                                    $removed++
-                                } catch {}
-                            }
-                    }
+                $tempDirs = New-Object System.Collections.Generic.List[string]
+                $tempDirs.Add("C:\Windows\Temp") | Out-Null
+                $usersRoot = Join-Path $env:SystemDrive "Users"
+                if (Test-Path $usersRoot) {
+                    Get-ChildItem -Path $usersRoot -Directory -Force -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notin @("Public","Default","Default User","All Users","WDAGUtilityAccount") } |
+                        ForEach-Object {
+                            $userTemp = Join-Path $_.FullName "AppData\Local\Temp"
+                            if (Test-Path $userTemp) { $tempDirs.Add($userTemp) | Out-Null }
+                        }
+                }
+                foreach ($dir in $tempDirs) {
+                    L "    Durchsuche: $dir"
+                    Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue |
+                        Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -lt (Get-Date).AddDays(-3) } |
+                        ForEach-Object {
+                            try {
+                                $sz = $_.Length
+                                Remove-Item $_.FullName -Force -ErrorAction Stop
+                                $freedMB += $sz / 1MB
+                                $removed++
+                            } catch {}
+                        }
                 }
                 L "    [OK] $removed Dateien entfernt ($([Math]::Round($freedMB, 1)) MB freigegeben)"
 
@@ -1322,16 +1410,31 @@ function Start-Maintenance {
                     }
                 } catch { L "    Zugriff verweigert (Windows Update laeuft moeglicherweise)" }
 
-                # Thumbnail Cache
+                # Thumbnail Cache (alle User-Profile)
+                # Iteriert C:\Users\*\AppData\Local\Microsoft\Windows\Explorer dynamisch.
                 L "  Schritt 5/5: Thumbnail-Cache..."
                 try {
-                    $thumbDir = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Explorer"
-                    if (Test-Path $thumbDir) {
-                        $thumbFiles = Get-ChildItem $thumbDir -Filter "thumbcache_*.db" -Force -ErrorAction SilentlyContinue
-                        $thumbSize = [Math]::Round(($thumbFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
-                        $thumbFiles | ForEach-Object { try { Remove-Item $_.FullName -Force } catch {} }
-                        L "    [OK] $($thumbFiles.Count) Cache-Dateien ($thumbSize MB)"
+                    $thumbCount = 0
+                    $thumbSize = 0
+                    $usersRoot = Join-Path $env:SystemDrive "Users"
+                    if (Test-Path $usersRoot) {
+                        Get-ChildItem -Path $usersRoot -Directory -Force -ErrorAction SilentlyContinue |
+                            Where-Object { $_.Name -notin @("Public","Default","Default User","All Users","WDAGUtilityAccount") } |
+                            ForEach-Object {
+                                $thumbDir = Join-Path $_.FullName "AppData\Local\Microsoft\Windows\Explorer"
+                                if (Test-Path $thumbDir) {
+                                    $files = Get-ChildItem $thumbDir -Filter "thumbcache_*.db" -Force -ErrorAction SilentlyContinue
+                                    foreach ($f in $files) {
+                                        try {
+                                            $thumbSize += $f.Length
+                                            Remove-Item $f.FullName -Force -ErrorAction Stop
+                                            $thumbCount++
+                                        } catch {}
+                                    }
+                                }
+                            }
                     }
+                    L "    [OK] $thumbCount Cache-Dateien ($([Math]::Round($thumbSize / 1MB, 1)) MB)"
                 } catch {}
 
                 L ""
