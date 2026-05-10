@@ -1,4 +1,4 @@
-# Version: 2.3.5
+# Version: 2.3.6
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -508,7 +508,8 @@ function Update-UI {
     $e.xLog.Content    = T "OpenLog"
     $e.xLogHdr.Text    = T "LiveLog"
     $e.xEnvLbl.Text    = T "Env"
-    $e.xFooter.Text    = T "Footer"
+    $scriptVersion = if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $Matches[1] } else { "?" }
+    $e.xFooter.Text    = "v$scriptVersion  -  " + (T "Footer")
     $e.xStatus.Text    = T "Ready"
     $e.xRestore.Text   = T "Restore";   $e.xRestoreD.Text   = T "RestoreD"
     $e.xDefender.Text  = T "Defender";  $e.xDefenderD.Text  = T "DefenderD"
