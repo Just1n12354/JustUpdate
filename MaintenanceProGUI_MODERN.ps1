@@ -1,4 +1,4 @@
-# Version: 2.4.6
+# Version: 2.4.7
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -967,7 +967,12 @@ function Start-Maintenance {
                     $updateNum = 1
                     foreach ($u in $softwareUpdates) {
                         $size = ""
-                        try { $size = " ($([Math]::Round($u.MaxDownloadSize / 1MB, 1)) MB)" } catch {}
+                        try {
+                            $sizeMb = [Math]::Round($u.MaxDownloadSize / 1MB, 1)
+                            # Sanity-Check: einige cumulative Updates (z.B. KB5089549) liefern absurd hohe MaxDownloadSize-Werte
+                            # (z.B. 92489.9 MB) - Anzeige unterdruecken statt User mit Fake-Zahl zu verwirren.
+                            if ($sizeMb -gt 0 -and $sizeMb -lt 50000) { $size = " ($sizeMb MB)" }
+                        } catch {}
                         L "    [$updateNum/$($softwareUpdates.Count)] $($u.Title)$size"
                         if (-not $u.EulaAccepted) { try { $u.AcceptEula() | Out-Null } catch {} }
                         if (-not $u.IsDownloaded) { $dlColl.Add($u) | Out-Null }
@@ -978,6 +983,7 @@ function Start-Maintenance {
                     $dlFailed = $false
                     if ($dlColl.Count -gt 0) {
                         L "  Lade $($dlColl.Count) Update(s) herunter..."
+                        L "  (Download kann mehrere Minuten dauern - bitte warten, App reagiert solange nicht)"
                         $dl = $session.CreateUpdateDownloader()
                         $dl.Updates = $dlColl
                         $dlResult = $dl.Download()
@@ -1068,6 +1074,7 @@ function Start-Maintenance {
                     }
                     L ""
                     L "  Lade Treiber herunter..."
+                    L "  (Download kann mehrere Minuten dauern - bitte warten, App reagiert solange nicht)"
                     $dl = $session.CreateUpdateDownloader()
                     $dl.Updates = $dColl
                     $dlRes = $dl.Download()
@@ -1308,6 +1315,7 @@ function Start-Maintenance {
                         }
                         if ($storeDl.Count -gt 0) {
                             L "    Lade $($storeDl.Count) Store-Update(s) herunter..."
+                            L "    (Download kann mehrere Minuten dauern - bitte warten)"
                             $sd = $storeSession.CreateUpdateDownloader()
                             $sd.Updates = $storeDl
                             $sdr = $sd.Download()
