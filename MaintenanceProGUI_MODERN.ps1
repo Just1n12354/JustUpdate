@@ -1,4 +1,7 @@
-# Version: 2.4.5
+# Version: 2.4.6
+# Copyright (c) 2026 Itin TechSolutions / Justin Itin
+# Alle Rechte vorbehalten - info@itintechsolutions.ch
+# https://itintechsolutions.ch
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -22,6 +25,11 @@ if ($PSVersionTable.PSEdition -eq "Core" -or
 # Deaktivierbar via Umgebungsvariable JUSTUPDATE_NO_SELFUPDATE=1.
 # =====================================================================
 if ($env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
+    # ProgressPreference fuer den Download unterdruecken — sonst rendert Windows PowerShell
+    # die deutsche Fortschrittsanzeige ("Webanforderung wird geschrieben / Anzahl geschriebener Bytes")
+    # ueber das WPF-Window und macht Invoke-WebRequest ausserdem ~10x langsamer.
+    $savedProgressPreference = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
     try {
         $remoteUrl = "https://raw.githubusercontent.com/Just1n12354/JustUpdate/main/MaintenanceProGUI_MODERN.ps1"
         $tempFile  = Join-Path $env:TEMP "JustUpdate_remote.ps1"
@@ -56,6 +64,8 @@ if ($env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
         Remove-Item $tempFile -ErrorAction SilentlyContinue
     } catch {
         # Offline / GitHub unreachable / keine Schreibrechte -> Fallback auf lokale Version
+    } finally {
+        $ProgressPreference = $savedProgressPreference
     }
 }
 
