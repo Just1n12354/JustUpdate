@@ -1,4 +1,4 @@
-# Version: 2.4.7
+# Version: 2.4.8
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -828,6 +828,46 @@ function Start-Maintenance {
             M $id $uiState
         }
 
+        # Heartbeat-Runspace fuer blockierende WUA-Calls (Download/Install). Die WUA-COM-APIs
+        # IUpdateDownloader.Download() und IUpdateInstaller.Install() sind synchron und geben
+        # keinen Fortschritt zurueck. Ohne Heartbeat sieht der User minutenlang nichts und denkt
+        # die App haengt. Loesung: paralleler Runspace logt alle 30s "...laeuft seit Xm Ys..."
+        # via $sync.Lines (synchronized) - der UI-Timer rendert das auf dem Live-Log.
+        function Start-Heartbeat([string]$prefix, [int]$intervalSec = 30) {
+            $hbRs = [runspacefactory]::CreateRunspace()
+            $hbRs.ApartmentState = 'STA'
+            $hbRs.Open()
+            $hbRs.SessionStateProxy.SetVariable('sync', $sync)
+            $hbRs.SessionStateProxy.SetVariable('hbPrefix', $prefix)
+            $hbRs.SessionStateProxy.SetVariable('hbInterval', $intervalSec)
+            $hbRs.SessionStateProxy.SetVariable('hbLogFile', $logFile)
+            $hbPs = [powershell]::Create()
+            $hbPs.Runspace = $hbRs
+            [void]$hbPs.AddScript({
+                $started = Get-Date
+                while ($true) {
+                    Start-Sleep -Seconds $hbInterval
+                    if ($sync.Stop -eq $true) { break }
+                    $elapsed = [int]((Get-Date) - $started).TotalSeconds
+                    $min = [int]($elapsed / 60); $sec = $elapsed % 60
+                    $timeStr = if ($min -gt 0) { "${min}m ${sec}s" } else { "${sec}s" }
+                    $line = "[$(Get-Date -F 'HH:mm:ss')] ${hbPrefix}laeuft seit $timeStr - bitte warten..."
+                    try { $line | Out-File $hbLogFile -Append -Encoding utf8 } catch {}
+                    $sync.Lines.Add($line) | Out-Null
+                }
+            })
+            $handle = $hbPs.BeginInvoke()
+            return @{ Ps = $hbPs; Handle = $handle; Rs = $hbRs }
+        }
+        function Stop-Heartbeat($hb) {
+            if ($null -eq $hb) { return }
+            if ($hb.Ps) {
+                try { $hb.Ps.Stop() } catch {}
+                try { $hb.Ps.Dispose() } catch {}
+            }
+            if ($hb.Rs) { try { $hb.Rs.Close() } catch {} }
+        }
+
         $moduleOrder = @("Restore","Defender","WinUpdate","Drivers","Winget","Store","Repair","Network","Cleanup")
         $active = $moduleOrder | Where-Object { $cfg[$_] }
         $total = @($active).Count
@@ -986,7 +1026,8 @@ function Start-Maintenance {
                         L "  (Download kann mehrere Minuten dauern - bitte warten, App reagiert solange nicht)"
                         $dl = $session.CreateUpdateDownloader()
                         $dl.Updates = $dlColl
-                        $dlResult = $dl.Download()
+                        $hb = Start-Heartbeat "    Download "
+                        try { $dlResult = $dl.Download() } finally { Stop-Heartbeat $hb }
                         # ResultCode: 2=Success, 3=SucceededWithErrors, 4=Failed, 5=Aborted
                         if ($dlResult.ResultCode -eq 2) {
                             L "  [OK] Download abgeschlossen"
@@ -1007,9 +1048,11 @@ function Start-Maintenance {
 
                     if ($instColl.Count -gt 0) {
                         L "  Installiere $($instColl.Count) Update(s)..."
+                        L "  (Installation kann 5-30 Minuten dauern - bitte nicht abbrechen, PC nicht herunterfahren)"
                         $inst = $session.CreateUpdateInstaller()
                         $inst.Updates = $instColl
-                        $r = $inst.Install()
+                        $hb = Start-Heartbeat "    Installation "
+                        try { $r = $inst.Install() } finally { Stop-Heartbeat $hb }
 
                         $successCount = 0
                         $failCount = 0
@@ -1077,7 +1120,8 @@ function Start-Maintenance {
                     L "  (Download kann mehrere Minuten dauern - bitte warten, App reagiert solange nicht)"
                     $dl = $session.CreateUpdateDownloader()
                     $dl.Updates = $dColl
-                    $dlRes = $dl.Download()
+                    $hb = Start-Heartbeat "    Treiber-Download "
+                    try { $dlRes = $dl.Download() } finally { Stop-Heartbeat $hb }
                     if ($dlRes.ResultCode -eq 2) {
                         L "  [OK] Download abgeschlossen"
                     } else {
@@ -1087,9 +1131,11 @@ function Start-Maintenance {
                         throw "Download failed"
                     }
                     L "  Installiere Treiber..."
+                    L "  (Installation kann mehrere Minuten dauern - bitte warten)"
                     $inst = $session.CreateUpdateInstaller()
                     $inst.Updates = $dColl
-                    $r = $inst.Install()
+                    $hb = Start-Heartbeat "    Treiber-Installation "
+                    try { $r = $inst.Install() } finally { Stop-Heartbeat $hb }
 
                     $drvOk = 0; $drvFail = 0
                     $reportedOk = @()  # Treiber, die WUA als OK meldet — die werden gleich verifiziert
@@ -1318,7 +1364,8 @@ function Start-Maintenance {
                             L "    (Download kann mehrere Minuten dauern - bitte warten)"
                             $sd = $storeSession.CreateUpdateDownloader()
                             $sd.Updates = $storeDl
-                            $sdr = $sd.Download()
+                            $hb = Start-Heartbeat "      Store-Download "
+                            try { $sdr = $sd.Download() } finally { Stop-Heartbeat $hb }
                             if ($sdr.ResultCode -ne 2 -and $sdr.ResultCode -ne 3) {
                                 L "    [WARNUNG] Store-Download Code $($sdr.ResultCode)"
                             }
@@ -1329,9 +1376,11 @@ function Start-Maintenance {
                         }
                         if ($storeInst.Count -gt 0) {
                             L "    Installiere $($storeInst.Count) Store-Update(s)..."
+                            L "    (Installation kann mehrere Minuten dauern - bitte warten)"
                             $si = $storeSession.CreateUpdateInstaller()
                             $si.Updates = $storeInst
-                            $sir = $si.Install()
+                            $hb = Start-Heartbeat "      Store-Installation "
+                            try { $sir = $si.Install() } finally { Stop-Heartbeat $hb }
                             for ($k = 0; $k -lt $storeInst.Count; $k++) {
                                 $r = $sir.GetUpdateResult($k)
                                 # 2 = Succeeded, 3 = SucceededWithErrors
