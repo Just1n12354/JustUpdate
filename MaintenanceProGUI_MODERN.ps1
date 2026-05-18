@@ -1,4 +1,4 @@
-# Version: 2.4.8
+# Version: 2.5.1
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -807,6 +807,35 @@ function Start-Maintenance {
         $cfg = $sync.Config
         $logFile = $sync.LogPath
         try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
+        # OEM-Codepage fuer Legacy-Tools (DISM, ipconfig). winget/netsh/sfc bleiben UTF-8/UTF-16
+        # und bekommen pro Aufruf ihre eigene Encoding-Override. Ohne $oemEnc dekodiert
+        # PowerShell DISM-Bytes als UTF-8 -> Umlaute werden zu U+FFFD ("f�r", "Tempor�re").
+        $oemEnc = try { [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { [System.Text.Encoding]::GetEncoding(850) }
+
+        # Filtert hochfrequente Fortschrittszeilen aus SFC/DISM/winget Output. Behaelt nur
+        # 100%-Endzeile von Progress-Bars und nicht-Block-Inhaltszeilen.
+        function IsProgressNoise([string]$line) {
+            if ($null -eq $line) { return $true }
+            $t = $line.Trim()
+            if ($t.Length -lt 1) { return $true }
+            # SFC: "Überprüfung 5 % abgeschlossen." - nur 100% behalten.
+            # Codepoint-Syntax fuer Umlaute weil PS5.1 die Datei sonst als ANSI liest und das Pattern nicht matcht.
+            $uUml = [char]0x00DC  # Ü
+            $lUml = [char]0x00FC  # ü
+            if ($t -match "^(${uUml}berpr${lUml}fung|Verification|Verifikation)\s+(\d{1,3})\s*%\s*(abgeschlossen|complete|terminee)\.?\s*$") {
+                return ($Matches[2] -ne '100')
+            }
+            # DISM Fortschrittsbalken: "[==     3.8%     ]" - nur 100% behalten
+            if ($t -match '^\[=*\s*(\d{1,3}(?:\.\d+)?)%\s*=*\s*\]$') {
+                return ([double]$Matches[1] -lt 100)
+            }
+            # winget Block-Progress: Block-Elements U+2580..U+259F gefolgt von % oder Byte-Counter.
+            # Codepoint-Range statt Literal-Zeichen verwenden, damit das Script in jeder Encoding lesbar bleibt.
+            if ($t -match "^[$([char]0x2580)-$([char]0x259F)\s]+(\d+\s*%|\d+(\.\d+)?\s*(KB|MB|GB|B)\s*/\s*\d+(\.\d+)?\s*(KB|MB|GB|B))\s*$") {
+                return $true
+            }
+            return $false
+        }
 
         function L($m) {
             $line = "[$(Get-Date -F 'HH:mm:ss')] $m"
@@ -866,6 +895,86 @@ function Start-Maintenance {
                 try { $hb.Ps.Dispose() } catch {}
             }
             if ($hb.Rs) { try { $hb.Rs.Close() } catch {} }
+        }
+
+        # Startet ein externes Tool (sfc/dism/winget), streamt dessen Ausgabe live ins
+        # Log UND ueberwacht die Laufzeit. Reagiert das Tool laenger als $TimeoutSec
+        # nicht (klassischer DISM-/Download-Hang), wird der Prozessbaum hart beendet
+        # und die Wartung laeuft mit dem naechsten Modul weiter, statt ewig zu haengen.
+        #
+        # Bewusst KEIN .NET-Event-Delegate (add_OutputDataReceived) - PS5.1 stuerzt in
+        # Runspaces damit kommentarlos ab (Exit 2). Stattdessen die synchrone Original-
+        # Leseschleife + ein separater Watchdog-Runspace (gleiches bewaehrtes Muster
+        # wie Start-Heartbeat): der killt den Prozess nach Timeout, dadurch endet der
+        # StandardOutput-Stream und die Leseschleife laeuft von selbst aus.
+        function Invoke-MonitoredProcess {
+            param(
+                [string]$FileName,
+                [string]$Arguments,
+                [int]$TimeoutSec,
+                [System.Text.Encoding]$OutEncoding = $null,
+                [string]$Indent = "    "
+            )
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName               = $FileName
+            $psi.Arguments              = $Arguments
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError  = $true
+            $psi.UseShellExecute        = $false
+            $psi.CreateNoWindow         = $true
+            if ($OutEncoding) {
+                $psi.StandardOutputEncoding = $OutEncoding
+                $psi.StandardErrorEncoding  = $OutEncoding
+            }
+            $proc = [System.Diagnostics.Process]::Start($psi)
+
+            $wd = [hashtable]::Synchronized(@{ Killed = $false })
+            $wdRs = [runspacefactory]::CreateRunspace()
+            $wdRs.ApartmentState = 'STA'; $wdRs.Open()
+            $wdRs.SessionStateProxy.SetVariable('sync', $sync)
+            $wdRs.SessionStateProxy.SetVariable('wd', $wd)
+            $wdRs.SessionStateProxy.SetVariable('wdPid', $proc.Id)
+            $wdRs.SessionStateProxy.SetVariable('wdTimeout', $TimeoutSec)
+            $wdPs = [powershell]::Create(); $wdPs.Runspace = $wdRs
+            [void]$wdPs.AddScript({
+                $waited = 0
+                while ($waited -lt $wdTimeout) {
+                    Start-Sleep -Seconds 1
+                    $waited++
+                    if (-not (Get-Process -Id $wdPid -ErrorAction SilentlyContinue)) { return }
+                    if ($sync.Stop -eq $true) { break }
+                }
+                $wd.Killed = $true
+                try { Start-Process taskkill.exe -ArgumentList "/PID $wdPid /T /F" -WindowStyle Hidden -Wait -ErrorAction Stop } catch {}
+            })
+            $wdHandle = $wdPs.BeginInvoke()
+
+            $allLines = New-Object System.Collections.Generic.List[string]
+            try {
+                while (-not $proc.StandardOutput.EndOfStream) {
+                    $l = $proc.StandardOutput.ReadLine()
+                    if ($l -and $l.Trim().Length -gt 0) {
+                        $allLines.Add($l.Trim())
+                        if ($l.Trim().Length -gt 3 -and -not (IsProgressNoise $l)) { L "$Indent$($l.Trim())" }
+                    }
+                }
+            } catch {}
+            $errOut = ""
+            try { $errOut = $proc.StandardError.ReadToEnd() } catch {}
+            try { $proc.WaitForExit() } catch {}
+            if ($errOut -and $errOut.Trim().Length -gt 0) {
+                $errOut.Split("`n") | ForEach-Object {
+                    $t = $_.Trim()
+                    if ($t.Length -gt 0) { $allLines.Add($t); if ($t.Length -gt 3 -and -not (IsProgressNoise $t)) { L "$Indent$t" } }
+                }
+            }
+            $timedOut = ($wd.Killed -eq $true)
+            $exit = if ($timedOut) { -999 } else { try { $proc.ExitCode } catch { -1 } }
+            try { $wdPs.Stop() } catch {}
+            try { $wdPs.Dispose() } catch {}
+            try { $wdRs.Close() } catch {}
+            try { $proc.Dispose() } catch {}
+            return [pscustomobject]@{ ExitCode = $exit; TimedOut = $timedOut; Lines = $allLines }
         }
 
         $moduleOrder = @("Restore","Defender","WinUpdate","Drivers","Winget","Store","Repair","Network","Cleanup")
@@ -1234,34 +1343,24 @@ function Start-Maintenance {
                     $listOut = & $wg upgrade --accept-source-agreements 2>&1
                     $listOut | ForEach-Object {
                         $l = "$_".Trim()
-                        if ($l.Length -gt 2) { L "    $l" }
+                        if ($l.Length -gt 2 -and -not (IsProgressNoise $l)) { L "    $l" }
                     }
                     L ""
                     L "  Starte Upgrade aller Apps..."
                     L ""
 
-                    # Process starten und Output Zeile fuer Zeile streamen
-                    $psi = New-Object System.Diagnostics.ProcessStartInfo
-                    $psi.FileName = $wg
-                    $psi.Arguments = "upgrade --all --include-unknown --disable-interactivity --accept-source-agreements --accept-package-agreements"
-                    $psi.RedirectStandardOutput = $true
-                    $psi.RedirectStandardError = $true
-                    $psi.UseShellExecute = $false
-                    $psi.CreateNoWindow = $true
-                    $proc = [System.Diagnostics.Process]::Start($psi)
-
-                    # Output zusaetzlich sammeln fuer Result-Analyse (Empty-Detection)
-                    $wgUpgradeOutput = New-Object System.Collections.Generic.List[string]
-                    while (-not $proc.StandardOutput.EndOfStream) {
-                        $l = $proc.StandardOutput.ReadLine()
-                        if ($l -and $l.Trim().Length -gt 1) {
-                            $wgUpgradeOutput.Add($l.Trim())
-                            L "    $($l.Trim())"
-                        }
-                    }
-                    $proc.WaitForExit()
-
-                    $exitCode = $proc.ExitCode
+                    # Process starten, Output live streamen UND Laufzeit ueberwachen.
+                    # 60-Min-Timeout: ein einzelner Riesen-Download (z.B. Game-Engines
+                    # / grosse Suites) oder ein haengender Installer darf die Wartung
+                    # nicht endlos blockieren - dann lieber dieses Modul ueberspringen
+                    # (Bug: 145 Min ohne Reaktion).
+                    $wgRun = Invoke-MonitoredProcess -FileName $wg `
+                               -Arguments "upgrade --all --include-unknown --disable-interactivity --accept-source-agreements --accept-package-agreements" `
+                               -TimeoutSec 3600
+                    # Result-Detection braucht alle Zeilen; Live-Log filtert nur Block-Progress.
+                    $wgUpgradeOutput = $wgRun.Lines
+                    $wgTimedOut = $wgRun.TimedOut
+                    $exitCode   = $wgRun.ExitCode
                     # winget gibt bei "nichts zu tun" haeufig Exit 0 zurueck mit Sprach-Meldung
                     # "Es wurde kein installiertes Paket gefunden" (DE) / "No installed package" (EN) /
                     # "Aucun package installe" (FR). Dann ist nichts aktualisiert worden.
@@ -1269,7 +1368,11 @@ function Start-Maintenance {
                     $nothingToDo = $combined -match 'kein installiertes Paket|No installed package|Aucun package install'
                     $installedAny = $combined -match 'Successfully installed|Erfolgreich installiert|Installation reussie'
                     L ""
-                    if ($exitCode -eq 0) {
+                    if ($wgTimedOut) {
+                        L "  [WARNUNG] App-Updates nach 60 Min ohne Reaktion abgebrochen"
+                        L "  Wahrscheinlich ein sehr grosser Download oder haengender Installer"
+                        Mark "Winget" "warn" "Nach 60 Min abgebrochen - eine App (vermutlich ein sehr grosser Download) hat zu lange gebraucht. Die uebrigen Apps wurden aktualisiert; bitte JustUpdate spaeter erneut ausfuehren."
+                    } elseif ($exitCode -eq 0) {
                         if ($nothingToDo -and -not $installedAny) {
                             L "  [OK] Keine App-Updates verfuegbar - alle Apps aktuell"
                             Mark "Winget" "ok" "keine Updates verfuegbar"
@@ -1431,32 +1534,28 @@ function Start-Maintenance {
             try {
                 L "  Schritt 1/2: SFC (System File Checker)"
                 L "  Pruefe Integritaet der Systemdateien..."
+                L "  (Bricht nach 30 Min ohne Reaktion automatisch ab)"
                 L ""
 
-                $psi = New-Object System.Diagnostics.ProcessStartInfo
-                $psi.FileName = "sfc.exe"
-                $psi.Arguments = "/scannow"
-                $psi.RedirectStandardOutput = $true
-                $psi.RedirectStandardError = $true
-                $psi.UseShellExecute = $false
-                $psi.CreateNoWindow = $true
-                # SFC gibt UTF-16 LE aus — sonst bekommen wir Gibberish
-                $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-                $psi.StandardErrorEncoding  = [System.Text.Encoding]::Unicode
-                $proc = [System.Diagnostics.Process]::Start($psi)
-                while (-not $proc.StandardOutput.EndOfStream) {
-                    $l = $proc.StandardOutput.ReadLine()
-                    if ($l -and $l.Trim().Length -gt 3) { L "    $($l.Trim())" }
-                }
-                $sfcErr = $proc.StandardError.ReadToEnd()
-                $proc.WaitForExit()
-                $sfcExit = $proc.ExitCode
-                if ($sfcErr -and $sfcErr.Trim().Length -gt 0) {
-                    $sfcErr.Split("`n") | ForEach-Object { $l = $_.Trim(); if ($l.Length -gt 0) { L "    $l" } }
-                }
-                $sfcOk = ($sfcExit -eq 0)
+                # SFC gibt UTF-16 LE aus - sonst bekommen wir Gibberish.
+                # Ueberwacht mit 30-Min-Timeout, damit ein haengendes sfc.exe die
+                # Wartung nicht endlos blockiert (Bug: 145 Min ohne Reaktion).
+                $sfcRun = Invoke-MonitoredProcess -FileName "sfc.exe" -Arguments "/scannow" `
+                            -TimeoutSec 1800 -OutEncoding ([System.Text.Encoding]::Unicode)
+                $sfcExit     = $sfcRun.ExitCode
+                $sfcTimedOut = $sfcRun.TimedOut
+                # Pending-Reboot wird von sfc.exe mit Exit-Code 1 + Meldung "Systemreparatur aus" /
+                # "Neustart erfordert" / "pending system repair" gemeldet. Das ist kein Fehler — SFC
+                # konnte legitim nicht laufen, weil ein vorheriger CBS-Vorgang noch nicht durch ist.
+                $sfcCombined = ($sfcRun.Lines -join " ")
+                $sfcPending = (-not $sfcTimedOut) -and ($sfcExit -ne 0) -and ($sfcCombined -match 'Systemreparatur aus|Neustart erfordert|pending system repair|requires a restart')
+                $sfcOk = (-not $sfcTimedOut) -and ($sfcExit -eq 0)
                 if ($sfcOk) {
                     L "  [OK] SFC abgeschlossen"
+                } elseif ($sfcTimedOut) {
+                    L "  [WARNUNG] SFC reagierte 30 Min nicht - abgebrochen und uebersprungen"
+                } elseif ($sfcPending) {
+                    L "  [WARNUNG] SFC uebersprungen - Neustart erforderlich, dann erneut ausfuehren"
                 } else {
                     L "  [FEHLER] SFC fehlgeschlagen (Exit-Code: $sfcExit)"
                 }
@@ -1464,29 +1563,23 @@ function Start-Maintenance {
                 L ""
                 L "  Schritt 2/2: DISM (Deployment Image Servicing)"
                 L "  Repariere Windows-Komponentenspeicher..."
+                L "  (Bricht nach 45 Min ohne Reaktion automatisch ab)"
                 L ""
 
-                $psi2 = New-Object System.Diagnostics.ProcessStartInfo
-                $psi2.FileName = "dism.exe"
-                $psi2.Arguments = "/online /cleanup-image /restorehealth"
-                $psi2.RedirectStandardOutput = $true
-                $psi2.RedirectStandardError = $true
-                $psi2.UseShellExecute = $false
-                $psi2.CreateNoWindow = $true
-                $proc2 = [System.Diagnostics.Process]::Start($psi2)
-                while (-not $proc2.StandardOutput.EndOfStream) {
-                    $l = $proc2.StandardOutput.ReadLine()
-                    if ($l -and $l.Trim().Length -gt 3) { L "    $($l.Trim())" }
-                }
-                $dismErr = $proc2.StandardError.ReadToEnd()
-                $proc2.WaitForExit()
-                $dismExit = $proc2.ExitCode
-                if ($dismErr -and $dismErr.Trim().Length -gt 0) {
-                    $dismErr.Split("`n") | ForEach-Object { $l = $_.Trim(); if ($l.Length -gt 0) { L "    $l" } }
-                }
-                $dismOk = ($dismExit -eq 0)
+                # DISM emittiert OEM-Codepage (CP850 auf DE-Locale), nicht UTF-8.
+                # 45-Min-Timeout: DISM /restorehealth haengt sich klassisch auf, wenn
+                # der Komponentenspeicher beschaedigt ist oder Windows Update nicht
+                # erreichbar ist - genau die Ursache fuer den 145-Min-Hang.
+                $dismRun = Invoke-MonitoredProcess -FileName "dism.exe" `
+                             -Arguments "/online /cleanup-image /restorehealth" `
+                             -TimeoutSec 2700 -OutEncoding $oemEnc
+                $dismExit     = $dismRun.ExitCode
+                $dismTimedOut = $dismRun.TimedOut
+                $dismOk = (-not $dismTimedOut) -and ($dismExit -eq 0)
                 if ($dismOk) {
                     L "  [OK] DISM abgeschlossen"
+                } elseif ($dismTimedOut) {
+                    L "  [WARNUNG] DISM reagierte 45 Min nicht - abgebrochen und uebersprungen"
                 } else {
                     L "  [FEHLER] DISM fehlgeschlagen (Exit-Code: $dismExit)"
                 }
@@ -1495,13 +1588,20 @@ function Start-Maintenance {
                 if ($sfcOk -and $dismOk) {
                     L "  [OK] System-Reparatur abgeschlossen"
                     Mark "Repair" "ok" "SFC + DISM erfolgreich"
+                } elseif ($sfcPending -and $dismOk) {
+                    L "  [WARNUNG] DISM OK - SFC braucht Neustart, dann erneut ausfuehren"
+                    Mark "Repair" "warn" "Kein echter Fehler: Eine fruehere Windows-Reparatur ist noch offen. Bitte den PC neu starten und JustUpdate danach nochmal ausfuehren."
+                } elseif ($sfcTimedOut -or $dismTimedOut) {
+                    $slow = @(); if ($sfcTimedOut) { $slow += "SFC" }; if ($dismTimedOut) { $slow += "DISM" }
+                    L "  [WARNUNG] System-Reparatur abgebrochen (Zeitueberschreitung: $($slow -join ' + '))"
+                    Mark "Repair" "warn" "$($slow -join ' + ') hat zu lange nicht reagiert und wurde nach dem Zeitlimit abgebrochen. Meist nur voruebergehend - bitte den PC neu starten und JustUpdate spaeter erneut ausfuehren."
                 } elseif ($sfcOk -or $dismOk) {
-                    $who = if ($sfcOk) { "DISM fehlgeschlagen" } else { "SFC fehlgeschlagen" }
-                    L "  [WARNUNG] Teilweise erfolgreich - $who"
-                    Mark "Repair" "warn" $who
+                    $who = if ($sfcOk) { "DISM" } else { "SFC" }
+                    L "  [WARNUNG] Teilweise erfolgreich - $who fehlgeschlagen"
+                    Mark "Repair" "warn" "$who konnte nicht abgeschlossen werden (der andere Teil war erfolgreich). Bitte JustUpdate als Administrator erneut ausfuehren."
                 } else {
                     L "  [FEHLER] SFC und DISM fehlgeschlagen - Admin-Rechte pruefen"
-                    Mark "Repair" "err" "SFC und DISM fehlgeschlagen"
+                    Mark "Repair" "err" "SFC und DISM fehlgeschlagen - bitte JustUpdate als Administrator starten (Rechtsklick > Als Administrator ausfuehren)."
                 }
             } catch {
                 L "  [FEHLER] $($_.Exception.Message)"
@@ -1521,10 +1621,28 @@ function Start-Maintenance {
             try {
                 $netFailures = @()
 
+                # Helper: Native EXE mit OEM-Encoding ausfuehren (ipconfig emittiert CP850).
+                function Invoke-OemCapture([string]$exe, [string]$argString) {
+                    $p = New-Object System.Diagnostics.ProcessStartInfo
+                    $p.FileName = $exe
+                    $p.Arguments = $argString
+                    $p.RedirectStandardOutput = $true
+                    $p.RedirectStandardError = $true
+                    $p.UseShellExecute = $false
+                    $p.CreateNoWindow = $true
+                    $p.StandardOutputEncoding = $oemEnc
+                    $p.StandardErrorEncoding  = $oemEnc
+                    $pr = [System.Diagnostics.Process]::Start($p)
+                    $so = $pr.StandardOutput.ReadToEnd()
+                    $se = $pr.StandardError.ReadToEnd()
+                    $pr.WaitForExit()
+                    return @{ Out = ($so + $se) -split "`r?`n"; Exit = $pr.ExitCode }
+                }
+
                 L "  Schritt 1/5: DNS-Cache leeren..."
-                $dnsOut = & ipconfig /flushdns 2>&1
-                $dnsOut | ForEach-Object { $l = "$_".Trim(); if ($l.Length -gt 1) { L "    $l" } }
-                if ($LASTEXITCODE -ne 0) { $netFailures += "DNS-Flush" }
+                $dns = Invoke-OemCapture "ipconfig.exe" "/flushdns"
+                $dns.Out | ForEach-Object { $l = "$_".Trim(); if ($l.Length -gt 1) { L "    $l" } }
+                if ($dns.Exit -ne 0) { $netFailures += "DNS-Flush" }
 
                 L "  Schritt 2/5: Winsock-Katalog zuruecksetzen..."
                 $wsOut = & netsh winsock reset 2>&1
@@ -1534,15 +1652,34 @@ function Start-Maintenance {
                 }
 
                 L "  Schritt 3/5: IP-Adresse freigeben..."
-                & ipconfig /release 2>&1 | Out-Null
+                [void](Invoke-OemCapture "ipconfig.exe" "/release")
 
                 L "  Schritt 4/5: Neue IP-Adresse beziehen..."
-                $renewOut = & ipconfig /renew 2>&1
-                $renewOut | ForEach-Object { $l = "$_".Trim(); if ($l.Length -gt 1) { L "    $l" } }
+                $ren = Invoke-OemCapture "ipconfig.exe" "/renew"
+                $ren.Out | ForEach-Object { $l = "$_".Trim(); if ($l.Length -gt 1) { L "    $l" } }
 
                 L "  Schritt 5/5: TCP/IP-Stack zuruecksetzen..."
                 $tcpOut = & netsh int ip reset 2>&1
-                $tcpOut | ForEach-Object { $l = "$_".Trim(); if ($l.Length -gt 1) { L "    $l" } }
+                # netsh int ip reset emittiert ~16 Zeilen ohne Schluessel-Namen (leere
+                # Uebersetzung im NSI-Layer). Wir loggen Zeilen mit Praefix einzeln,
+                # die anonymen "wird zurueckgesetzt... OK/Fehler" aggregieren wir.
+                $anonOk = 0; $anonErr = 0; $lastWasAnonErr = $false
+                $uU = [char]0x00FC  # ü fuer "zurückgesetzt"
+                $anonPattern = "^(wird zur${uU}ckgesetzt|Resetting)\.{0,3}\s*(OK|Fehler|Failed|Failed\.|denied|verweigert)?\s*$"
+                foreach ($line in $tcpOut) {
+                    $l = "$line".Trim()
+                    if ($l.Length -lt 2) { $lastWasAnonErr = $false; continue }
+                    if ($l -match $anonPattern) {
+                        if ($l -match 'OK\s*$') { $anonOk++; $lastWasAnonErr = $false } else { $anonErr++; $lastWasAnonErr = $true }
+                        continue
+                    }
+                    if ($lastWasAnonErr -and $l -match '^(Zugriff verweigert|Access is denied)\s*$') { $lastWasAnonErr = $false; continue }
+                    $lastWasAnonErr = $false
+                    L "    $l"
+                }
+                if (($anonOk + $anonErr) -gt 0) {
+                    L "    (Weitere Reset-Schritte: $anonOk OK$(if ($anonErr -gt 0) { ", $anonErr Fehler (gesperrte Registry-Keys, harmlos)" }))"
+                }
                 # Hinweis: einzelne "Zugriff verweigert" Zeilen auf NSI-Registry-Keys
                 # (z.B. {eb004a00-...}\26) sind ein bekannter harmloser Windows-Artefakt.
                 # netsh setzt dann $LASTEXITCODE=1, druckt aber die Erfolgsmeldung
@@ -1710,8 +1847,19 @@ function Start-Maintenance {
         L "============================================"
         L "  ZUSAMMENFASSUNG"
         L "============================================"
+        # Klartext-Namen fuers Abschluss-Popup - der Kunde soll auf einen Blick sehen
+        # WELCHES Modul WARUM gewarnt/fehlgeschlagen ist, ohne erst das Log zu oeffnen.
+        $friendlyName = @{
+            Restore="Wiederherstellungspunkt"; Defender="Defender aktualisieren"
+            WinUpdate="Windows Updates";       Drivers="Treiber aktualisieren"
+            Winget="Apps aktualisieren";       Store="Microsoft Store Apps"
+            Repair="System-Reparatur";         Network="Netzwerk reparieren"
+            Cleanup="Bereinigung"
+        }
         $okCount = 0; $warnCount = 0; $errCount = 0
+        $issueLines = New-Object System.Collections.Generic.List[string]
         foreach ($modId in $active) {
+            $fn = if ($friendlyName.ContainsKey($modId)) { $friendlyName[$modId] } else { $modId }
             if ($sync.Results.ContainsKey($modId)) {
                 $r = $sync.Results[$modId]
                 $prefix = switch ($r.Status) {
@@ -1721,11 +1869,15 @@ function Start-Maintenance {
                     default { "[?]   " }
                 }
                 L "  $prefix $modId - $($r.Details)"
+                if ($r.Status -eq "warn") { $issueLines.Add("WARNUNG - ${fn}:`n   $($r.Details)") }
+                elseif ($r.Status -eq "err") { $issueLines.Add("FEHLER - ${fn}:`n   $($r.Details)") }
             } else {
                 L "  [?]    $modId - kein Ergebnis"
+                $issueLines.Add("FEHLER - ${fn}:`n   Kein Ergebnis - das Modul wurde nicht sauber beendet.")
                 $errCount++
             }
         }
+        $sync.SummaryDetails = ($issueLines -join "`n`n")
         L "============================================"
         L "  $okCount OK, $warnCount Warnungen, $errCount Fehler"
         L "  $(Get-Date -F 'dd.MM.yyyy HH:mm:ss')"
@@ -1805,7 +1957,11 @@ function End-Session {
                   elseif ($warn -gt 0) { "Wartung mit Warnungen beendet" }
                   else { T "Done" }
         if ($err -gt 0 -or $warn -gt 0) {
-            $msg += "`n`nDetails finden Sie im Log (Button 'LOG OEFFNEN')."
+            $details = if ($script:SyncHash) { [string]$script:SyncHash.SummaryDetails } else { "" }
+            if ($details.Trim().Length -gt 0) {
+                $msg += "`n`n--- Was genau ---`n`n$details"
+            }
+            $msg += "`n`nVollstaendige Details: Button 'LOG OEFFNEN'."
         }
         [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
     } else {
