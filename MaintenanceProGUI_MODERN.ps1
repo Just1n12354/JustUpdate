@@ -1,4 +1,4 @@
-# Version: 2.6.0
+# Version: 2.6.1
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -7,10 +7,43 @@ $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
               else { [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
 
+# Laeuft das hier als kompilierte JustUpdate.exe (PS2EXE) statt als .ps1 ueber
+# powershell.exe? Dann duerfen Self-Elevation (powershell -File <exe> ist ungueltig)
+# und Self-Update (wuerde die laufende .exe mit einer .ps1 ueberschreiben) NICHT
+# den .ps1-Pfad gehen. Die EXE aktualisiert sich spaeter ueber GitHub-Releases.
+$isExe = $ScriptPath -match '\.exe$'
+
+# Eine einzige Laufzeit-Versionsquelle fuer das ganze Skript (Footer, Report, ...).
+# .ps1: Header in Zeile 1.  .exe: aus den FileVersionInfo-Metadaten (von build.ps1
+# via PS2EXE -version gesetzt) - in der Binaerdatei gibt es keine lesbare "Zeile 1",
+# darum zeigte die EXE vorher "v?".
+$script:JUVersion = $null
+if ($isExe) {
+    try {
+        $pv = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ScriptPath).ProductVersion
+        if ($pv) {
+            # "2.6.0.0" -> sauber auf x.y.z (erste 3 Teile), NICHT Nullen strippen
+            $parts = ([string]$pv).Trim() -split '\.'
+            $script:JUVersion = (@($parts + '0' + '0')[0..2]) -join '.'
+        }
+    } catch {}
+} else {
+    try {
+        if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
+    } catch {}
+}
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.1' }   # letzter Fallback statt "?"
+
 # Ensure Windows PowerShell + STA + Admin
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if ($PSVersionTable.PSEdition -eq "Core" -or
+if ($isExe) {
+    # EXE: nur fehlende Admin-Rechte sind relevant (STA/Edition setzt PS2EXE selbst).
+    if (-not $isAdmin) {
+        Start-Process -FilePath $ScriptPath -Verb RunAs
+        exit
+    }
+} elseif ($PSVersionTable.PSEdition -eq "Core" -or
     [System.Threading.Thread]::CurrentThread.ApartmentState -ne "STA" -or
     -not $isAdmin) {
     Start-Process powershell.exe -Verb RunAs `
@@ -24,7 +57,7 @@ if ($PSVersionTable.PSEdition -eq "Core" -or
 # den Nutzer ob er das Update jetzt installieren will.
 # Deaktivierbar via Umgebungsvariable JUSTUPDATE_NO_SELFUPDATE=1.
 # =====================================================================
-if ($env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
+if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
     # ProgressPreference fuer den Download unterdruecken — sonst rendert Windows PowerShell
     # die deutsche Fortschrittsanzeige ("Webanforderung wird geschrieben / Anzahl geschriebener Bytes")
     # ueber das WPF-Window und macht Invoke-WebRequest ausserdem ~10x langsamer.
@@ -83,6 +116,90 @@ if ($env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
         # Offline / GitHub unreachable / keine Schreibrechte -> Fallback auf lokale Version
     } finally {
         $ProgressPreference = $savedProgressPreference
+    }
+}
+
+# =====================================================================
+# EXE-MIGRATION (Bestandskunden .ps1 -> JustUpdate.exe, ohne Reinstall)
+# Holt die EXE aus dem GitHub-Release, legt sie in den App-Ordner, biegt
+# die Verknuepfungen um und startet die EXE. Einmalig (Marker-Datei).
+#
+# SICHERHEIT: standardmaessig AUS. Erst wenn eine (spaeter SIGNIERTE) EXE
+# bereit ist, wird scharf geschaltet via Umgebungsvariable
+#   JUSTUPDATE_MIGRATE_EXE = 1
+# So koennen wir die Mechanik testen, ohne Produktiv-Kunden anzufassen.
+# Die .ps1 bleibt liegen (Fallback) - die Migration ist reversibel.
+# =====================================================================
+if (-not $isExe -and $env:JUSTUPDATE_MIGRATE_EXE -eq "1") {
+    try {
+        $appDir   = Split-Path -Parent $ScriptPath
+        $exePath  = Join-Path $appDir "JustUpdate.exe"
+        $marker   = Join-Path $appDir ".exe_migrated"
+        if (-not (Test-Path $marker)) {
+            $tmpExe = Join-Path $env:TEMP "JustUpdate_new.exe"
+            # Test-Override: lokale Datei / Test-URL, ohne das oeffentliche Release
+            # anzufassen. z.B.  $env:JUSTUPDATE_EXE_URL = "C:\...\JustUpdate.exe"
+            $exeUrl = if ($env:JUSTUPDATE_EXE_URL) { $env:JUSTUPDATE_EXE_URL }
+                      else { "https://github.com/Just1n12354/JustUpdate/releases/latest/download/JustUpdate.exe" }
+            if ($exeUrl -notmatch '^https?://') {
+                Copy-Item $exeUrl $tmpExe -Force -ErrorAction Stop   # lokaler Pfad
+            } else {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                $sp = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+                try {
+                    Invoke-WebRequest -Uri $exeUrl -OutFile $tmpExe -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+                } finally { $ProgressPreference = $sp }
+            }
+
+            # Integritaet: echte PE-Datei (MZ-Header) + plausible Groesse?
+            $okPe = $false
+            if ((Test-Path $tmpExe) -and (Get-Item $tmpExe).Length -gt 100KB) {
+                $fs = [IO.File]::OpenRead($tmpExe)
+                try { $b = New-Object byte[] 2; [void]$fs.Read($b,0,2) } finally { $fs.Close() }
+                $okPe = ($b[0] -eq 0x4D -and $b[1] -eq 0x5A)   # 'MZ'
+            }
+            if ($okPe) {
+                Copy-Item $tmpExe $exePath -Force
+                Remove-Item $tmpExe -ErrorAction SilentlyContinue
+
+                # Verknuepfungen umbiegen: Desktop (Public/User) + Startmenue.
+                $sh = New-Object -ComObject WScript.Shell
+                $lnkDirs = @(
+                    "$env:PUBLIC\Desktop", "$env:USERPROFILE\Desktop",
+                    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+                    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+                )
+                $changed = 0
+                foreach ($d in $lnkDirs) {
+                    if (-not (Test-Path $d)) { continue }
+                    Get-ChildItem $d -Filter "JustUpdate*.lnk" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                        try {
+                            $lnk = $sh.CreateShortcut($_.FullName)
+                            $lnk.TargetPath       = $exePath
+                            $lnk.Arguments        = ""
+                            $lnk.WorkingDirectory = $appDir
+                            $lnk.IconLocation     = "$exePath,0"
+                            $lnk.Save()
+                            $changed++
+                        } catch {}
+                    }
+                }
+                # Marker mit Revert-Info (falls je zurueck auf .ps1 noetig).
+                @(
+                    "migrated=$(Get-Date -Format o)",
+                    "exe=$exePath",
+                    "revert_target=powershell.exe",
+                    "revert_args=-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$ScriptPath`"",
+                    "shortcuts_changed=$changed"
+                ) | Out-File -FilePath $marker -Encoding utf8 -Force
+
+                # In die frische EXE wechseln.
+                Start-Process -FilePath $exePath
+                exit
+            }
+        }
+    } catch {
+        # Migration fehlgeschlagen -> .ps1 laeuft normal weiter (kein Bruch).
     }
 }
 
@@ -594,8 +711,7 @@ function Update-UI {
     $e.xLog.Content    = T "OpenLog"
     $e.xLogHdr.Text    = T "LiveLog"
     $e.xEnvLbl.Text    = T "Env"
-    $scriptVersion = if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $Matches[1] } else { "?" }
-    $e.xFooter.Text    = "v$scriptVersion  -  " + (T "Footer")
+    $e.xFooter.Text    = "v$($script:JUVersion)  -  " + (T "Footer")
     $e.xStatus.Text    = T "Ready"
     $e.xRestore.Text   = T "Restore";   $e.xRestoreD.Text   = T "RestoreD"
     $e.xDefender.Text  = T "Defender";  $e.xDefenderD.Text  = T "DefenderD"
@@ -1018,6 +1134,24 @@ function Start-Maintenance {
             L ""
         }
 
+        # ── Connectivity-Precheck ── klare Offline-Meldung EINMAL, statt spaeter
+        # mehrere kryptische Timeouts in Defender/WinUpdate/Winget/Store.
+        $online = $false
+        try {
+            $req = [System.Net.WebRequest]::Create("https://www.microsoft.com")
+            $req.Method = "HEAD"; $req.Timeout = 5000
+            $resp = $req.GetResponse(); $resp.Close(); $online = $true
+        } catch { $online = $false }
+        if ($online) {
+            L "  Internet-Verbindung: OK"
+        } else {
+            L "  [WARNUNG] Keine Internet-Verbindung erkannt."
+            L "  Online-Module (Defender, Windows Update, Apps, Store) koennen"
+            L "  fehlschlagen oder nichts finden - das ist dann KEIN Geraetefehler."
+            L "  Offline-Module (Reparatur, Netzwerk, Bereinigung) laufen normal."
+        }
+        L ""
+
         # ── RESTORE POINT ──
         if ($cfg.Restore) {
             if (IsStopped) { $sync.Done = $true; return }
@@ -1027,12 +1161,47 @@ function Start-Maintenance {
             L "--------------------------------------------"
             L "  Systemschutz aktivieren auf C:\..."
             try {
-                try { Enable-ComputerRestore -Drive "C:\" -ErrorAction SilentlyContinue } catch {}
+                try { Enable-ComputerRestore -Drive "C:\" -ErrorAction Stop }
+                catch { L "  [Hinweis] Systemschutz liess sich nicht aktivieren (evtl. per Richtlinie gesperrt)" }
+
+                # Windows erlaubt per Default nur 1 Restore-Punkt / 24h und
+                # ueberspringt weitere STILL (sieht aus wie Erfolg, ist aber keiner).
+                # Frequenz-Sperre fuer diesen Lauf aushebeln, danach zuruecksetzen.
+                $srKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore"
+                $freqOrig = $null
+                try {
+                    if (-not (Test-Path $srKey)) { New-Item -Path $srKey -Force | Out-Null }
+                    $freqOrig = (Get-ItemProperty -Path $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue).SystemRestorePointCreationFrequency
+                    Set-ItemProperty -Path $srKey -Name SystemRestorePointCreationFrequency -Value 0 -Type DWord -ErrorAction SilentlyContinue
+                } catch {}
+
+                $rpName = "MaintenancePro_$(Get-Date -F 'yyyyMMdd_HHmm')"
                 L "  Erstelle Wiederherstellungspunkt..."
-                L "  Name: MaintenancePro_$(Get-Date -F 'yyyyMMdd_HHmm')"
-                Checkpoint-Computer -Description "MaintenancePro_$(Get-Date -F 'yyyyMMdd_HHmm')" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
-                L "  [OK] Wiederherstellungspunkt erfolgreich erstellt"
-                Mark "Restore" "ok" "erstellt"
+                L "  Name: $rpName"
+                try {
+                    Checkpoint-Computer -Description $rpName -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
+                    L "  [OK] Wiederherstellungspunkt erfolgreich erstellt"
+                    Mark "Restore" "ok" "erstellt"
+                } catch {
+                    $em = $_.Exception.Message
+                    # Systemschutz aus / per GPO gesperrt = KEIN Fehler des Wartungs-
+                    # laufs -> als klaren Hinweis (warn) statt rotem Fehler melden.
+                    if ($em -match 'disabled|deaktiviert|0x8004230F|VSS|shadow|policy|Richtlinie|81000101|frequency|0x81000101') {
+                        L "  [HINWEIS] Wiederherstellungspunkt uebersprungen:"
+                        L "    Systemschutz ist auf diesem PC deaktiviert oder per"
+                        L "    Firmen-Richtlinie gesperrt - kein Wartungsfehler."
+                        Mark "Restore" "warn" "Systemschutz deaktiviert/gesperrt - Punkt uebersprungen (kein Geraetefehler)"
+                    } else {
+                        L "  [FEHLER] $em"
+                        Mark "Restore" "err" $em
+                    }
+                } finally {
+                    # Frequenz-Sperre exakt wie vorgefunden wiederherstellen.
+                    try {
+                        if ($null -ne $freqOrig) { Set-ItemProperty -Path $srKey -Name SystemRestorePointCreationFrequency -Value $freqOrig -Type DWord -ErrorAction SilentlyContinue }
+                        else { Remove-ItemProperty -Path $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue }
+                    } catch {}
+                }
             } catch {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Restore" "err" $_.Exception.Message
@@ -1049,6 +1218,13 @@ function Start-Maintenance {
             L "  MODUL 2: Windows Defender"
             L "--------------------------------------------"
             try {
+                # Drittanbieter-AV (Norton/Avast/...) erkennen: dann ist Defender
+                # passiv -> "nicht verfuegbar" ist NORMAL, kein Fehler/Warnung.
+                $otherAv = $null
+                try {
+                    $avs = Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue
+                    $otherAv = ($avs | Where-Object { $_.displayName -and $_.displayName -notmatch 'Windows Defender|Microsoft Defender' } | Select-Object -First 1).displayName
+                } catch {}
                 if (Get-Command Update-MpSignature -ErrorAction SilentlyContinue) {
                     # Aktuelle Version vor dem Update merken (fuer Verifikation)
                     $defOldVer = $null
@@ -1091,13 +1267,22 @@ function Start-Maintenance {
                         L "  [WARNUNG] Update-Befehl lief durch, Verifikation aber nicht moeglich"
                         Mark "Defender" "warn" "Status nicht verifizierbar"
                     }
+                } elseif ($otherAv) {
+                    L "  [OK] Windows Defender inaktiv - Drittanbieter-Virenschutz aktiv:"
+                    L "       $otherAv  (aktualisiert sich selbst - kein Handlungsbedarf)"
+                    Mark "Defender" "ok" "Fremd-AV aktiv ($otherAv) - Defender passiv, normal"
                 } else {
                     L "  [WARNUNG] Windows Defender ist auf diesem System nicht verfuegbar"
                     Mark "Defender" "warn" "Defender nicht verfuegbar"
                 }
             } catch {
-                L "  [FEHLER] $($_.Exception.Message)"
-                Mark "Defender" "err" $_.Exception.Message
+                if ($otherAv) {
+                    L "  [OK] Defender-Update nicht moeglich - Drittanbieter-AV aktiv: $otherAv"
+                    Mark "Defender" "ok" "Fremd-AV aktiv ($otherAv)"
+                } else {
+                    L "  [FEHLER] $($_.Exception.Message)"
+                    Mark "Defender" "err" $_.Exception.Message
+                }
             }
             $i++; P ($i / $total * 100)
             L ""
@@ -1352,7 +1537,31 @@ function Start-Maintenance {
             L "  MODUL 5: Apps aktualisieren (Winget)"
             L "--------------------------------------------"
             try {
-                $wg = (Get-Command winget -ErrorAction SilentlyContinue).Source
+                $wg = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
+                if (-not $wg) {
+                    # Elevierter Admin-Prozess hat oft NICHT den WindowsApps-PATH des
+                    # angemeldeten Users -> Get-Command findet winget nicht, obwohl
+                    # installiert. Haeufigster Kunden-Fehlalarm "Winget nicht
+                    # installiert". Robust ueber bekannte Speicherorte aufloesen:
+                    $wgCand = @()
+                    # 1. Echtes Paket unter Program Files\WindowsApps (fuer Admin lesbar,
+                    #    zuverlaessigster Pfad im elevierten Kontext - kein Recurse).
+                    try {
+                        $pkgDir = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Directory -ErrorAction SilentlyContinue |
+                                  Where-Object { $_.Name -like 'Microsoft.DesktopAppInstaller_*_8wekyb3d8bbwe' } |
+                                  Sort-Object Name -Descending | Select-Object -First 1
+                        if ($pkgDir) { $wgCand += (Join-Path $pkgDir.FullName 'winget.exe') }
+                    } catch {}
+                    # 2. WindowsApps-Alias des aktuellen + aller realen Benutzerprofile
+                    #    (eleviert != angemeldeter User -> alle Profile pruefen).
+                    $wgCand += "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
+                    try {
+                        $wgCand += Get-ChildItem "$env:SystemDrive\Users" -Directory -ErrorAction SilentlyContinue |
+                                   ForEach-Object { Join-Path $_.FullName 'AppData\Local\Microsoft\WindowsApps\winget.exe' }
+                    } catch {}
+                    $wg = $wgCand | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+                    if ($wg) { L "  Winget ueber Fallback-Pfad aufgeloest (PATH unvollstaendig im Admin-Kontext)" }
+                }
                 if ($wg) {
                     L "  Winget gefunden: $wg"
                     L "  Pruefe verfuegbare Updates..."
@@ -2002,8 +2211,7 @@ function End-Session {
                     }
                 }
             }
-            $verLine = Get-Content $ScriptPath -TotalCount 1
-            $reportVer = if ($verLine -match '#\s*Version:\s*([\d.]+)') { $Matches[1] } else { "unknown" }
+            $reportVer = $script:JUVersion
             $started = $script:StartTime
             $report = [PSCustomObject]@{
                 tool            = "JustUpdate"
@@ -2024,6 +2232,18 @@ function End-Session {
             Get-ChildItem -Path (Split-Path $jsonPath) -Filter "result_*.json" -File -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTime -Descending | Select-Object -Skip 20 |
                 ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+
+            # Fleet-Monitoring: Report zusaetzlich zentral ablegen, wenn ein
+            # Sammelpfad gesetzt ist ($env:JUSTUPDATE_REPORT_DIR, z.B. OneDrive/
+            # NAS). Dateiname mit Host -> kollisionsfrei ueber viele Geraete.
+            # fleet-report.ps1 -Path <dieser Ordner> wertet das aus.
+            if ($env:JUSTUPDATE_REPORT_DIR) {
+                try {
+                    $fleetDir = $env:JUSTUPDATE_REPORT_DIR
+                    if (-not (Test-Path $fleetDir)) { New-Item -ItemType Directory -Path $fleetDir -Force -ErrorAction Stop | Out-Null }
+                    Copy-Item $jsonPath (Join-Path $fleetDir ("{0}__{1}" -f $env:COMPUTERNAME, (Split-Path $jsonPath -Leaf))) -Force -ErrorAction Stop
+                } catch { }
+            }
         } catch { }
 
         $msg    = "$ok erfolgreich, $warn Warnungen, $err Fehler"
@@ -2037,8 +2257,26 @@ function End-Session {
                 $msg += "`n`n--- Was genau ---`n`n$details"
             }
             $msg += "`n`nVollstaendige Details: Button 'LOG OEFFNEN'."
+            $msg += "`n`nBericht jetzt an den Support senden? (oeffnet E-Mail +"
+            $msg += "`nden Log-Ordner zum Anhaengen)"
+            $ans = [System.Windows.MessageBox]::Show($msg, $header,
+                [System.Windows.MessageBoxButton]::YesNo, $icon)
+            if ($ans -eq [System.Windows.MessageBoxResult]::Yes) {
+                try {
+                    $subj = "JustUpdate Bericht - $($env:COMPUTERNAME) - $ok OK / $warn Warn / $err Fehler"
+                    $bodyTxt = "Automatischer JustUpdate-Bericht`r`n`r`n" +
+                               "Host: $($env:COMPUTERNAME)`r`nBenutzer: $($env:USERNAME)`r`n" +
+                               "Version: v$($script:JUVersion)`r`n" +
+                               "Ergebnis: $ok OK, $warn Warnungen, $err Fehler`r`n`r`n" +
+                               "Bitte die Log-Datei aus dem geoeffneten Ordner anhaengen."
+                    $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyTxt))"
+                    Start-Process $u
+                    Start-Process explorer.exe "/select,`"$($script:LogPath)`""
+                } catch {}
+            }
+        } else {
+            [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
         }
-        [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
     } else {
         $e.xStatus.Text = T "Stopped"
     }

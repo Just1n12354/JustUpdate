@@ -1,3 +1,28 @@
+## v2.6.1
+
+**Stabilisierung (weniger Fehlalarme auf Fremd-/Kundengeräten):**
+- **Restore-Modul gehärtet:** Windows-24h-Sperre (1 Punkt/Tag) wird für den
+  Lauf ausgehebelt und exakt zurückgesetzt; deaktivierter/per-GPO gesperrter
+  Systemschutz wird als klarer Hinweis (warn) statt rotem Fehler gemeldet.
+- **Defender bei Drittanbieter-AV:** Norton/Avast/… wird erkannt → Defender
+  passiv = „OK (Fremd-AV aktiv)" statt Warnung/Fehler (keine Support-Anrufe
+  wegen Nicht-Problem).
+- **Connectivity-Precheck:** einmalige klare Offline-Meldung statt mehrerer
+  kryptischer Timeouts in Defender/WinUpdate/Winget/Store.
+
+**Fleet-Monitoring nutzbar gemacht:**
+- `$env:JUSTUPDATE_REPORT_DIR` → result-JSON wird zusätzlich zentral
+  (OneDrive/NAS) abgelegt, Dateiname mit Host. `fleet-report.ps1` wertet aus
+  → endlich Sichtbarkeit über alle Kundengeräte.
+
+**Support-Flow:**
+- Bei Fehler/Warnung optional „Bericht an Support senden" → öffnet
+  vorausgefüllte Mail an info@itintechsolutions.ch + Log-Ordner zum Anhängen.
+
+**Tooling:** `build.ps1 -SkipExe` (sauberer PowerShell-only-Release), Build
+bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
+*(Hinweis: Codepage war bereits dynamisch — kein Handlungsbedarf.)*
+
 ## v2.6.0
 
 **Release-Pipeline (Itin-TechSolutions-Ops):**
