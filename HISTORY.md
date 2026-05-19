@@ -1,3 +1,22 @@
+## v2.6.0
+
+**Release-Pipeline (Itin-TechSolutions-Ops):**
+- `VERSION` als Single Source of Truth — Version steht nur noch an EINER Stelle.
+- `build.ps1`: ein Befehl synct Version in `.ps1` + `.iss`, kompiliert den
+  Installer, legt ihn unter `Releases\v<X>\` ab, synct Skript + HISTORY ins
+  Verteil-Repo. `-Push` committet/pusht beide Repos. Schliesst die Lücke
+  "Source ≠ Verteil-Repo → Kunden ohne Update".
+
+**Robusteres Self-Update:**
+- Heruntergeladenes Skript wird vor dem Überschreiben **syntaktisch validiert**
+  (PowerShell-Parser) und auf gültigen `# Version:`-Header geprüft. Ein
+  abgebrochener/korrupter Download kann die Installation nicht mehr „bricken".
+
+**Maschinenlesbarer Report:**
+- Nach jedem Lauf wird `logs\result_<timestamp>.json` geschrieben (Host, Version,
+  Zeit, Dauer, pro-Modul-Status, Summe). Ermöglicht Fleet-Monitoring über mehrere
+  Kundengeräte hinweg.
+
 # Commit-History: JustUpdate
 
 Repo: https://github.com/Just1n12354/JustUpdate

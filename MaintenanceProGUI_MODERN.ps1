@@ -1,4 +1,4 @@
-# Version: 2.5.1
+# Version: 2.6.0
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -52,12 +52,29 @@ if ($env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
                     [System.Windows.MessageBoxButton]::YesNo,
                     [System.Windows.MessageBoxImage]::Question)
                 if ($answer -eq [System.Windows.MessageBoxResult]::Yes) {
-                    Copy-Item -Path $tempFile -Destination $ScriptPath -Force
-                    Remove-Item $tempFile -ErrorAction SilentlyContinue
-                    $env:JUSTUPDATE_NO_SELFUPDATE = "1"
-                    Start-Process powershell.exe -Verb RunAs `
-                        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$ScriptPath`""
-                    exit
+                    # INTEGRITAET: heruntergeladenes Skript MUSS sich sauber parsen
+                    # lassen, bevor es das laufende ueberschreibt. Sonst koennte ein
+                    # abgebrochener/korrupter Download (TLS-Reset, Proxy-HTML, halbe
+                    # Datei > 1000 Byte) die Installation unstartbar machen.
+                    $parseErr = $null
+                    [void][System.Management.Automation.Language.Parser]::ParseFile(
+                        $tempFile, [ref]$null, [ref]$parseErr)
+                    if ($parseErr -and $parseErr.Count -gt 0) {
+                        [System.Windows.MessageBox]::Show(
+                            "Das heruntergeladene Update ist beschaedigt und wurde " +
+                            "NICHT installiert.`nDie vorhandene Version bleibt " +
+                            "unveraendert. Bitte spaeter erneut versuchen.",
+                            "JustUpdate - Update abgebrochen",
+                            [System.Windows.MessageBoxButton]::OK,
+                            [System.Windows.MessageBoxImage]::Warning) | Out-Null
+                    } else {
+                        Copy-Item -Path $tempFile -Destination $ScriptPath -Force
+                        Remove-Item $tempFile -ErrorAction SilentlyContinue
+                        $env:JUSTUPDATE_NO_SELFUPDATE = "1"
+                        Start-Process powershell.exe -Verb RunAs `
+                            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$ScriptPath`""
+                        exit
+                    }
                 }
             }
         }
@@ -762,7 +779,9 @@ function Start-Maintenance {
 
     Reset-AllIcons
     $e.xLogBox.Clear()
+    try { $e.xBar.BeginAnimation([System.Windows.FrameworkElement]::WidthProperty, $null) } catch {}
     $e.xBar.Width = 0
+    $script:LastBarTarget = 0
     $e.xTime.Text = "00:00"
     $script:StartTime = Get-Date
 
@@ -1918,7 +1937,25 @@ function Start-Maintenance {
         }
         $pct = $s.Progress
         $pw = $e.xBar.Parent.ActualWidth
-        if ($pw -gt 0) { $e.xBar.Width = [Math]::Max(0, $pw * $pct / 100) }
+        if ($pw -gt 0) {
+            $target = [Math]::Max(0, $pw * $pct / 100)
+            # Nur animieren wenn sich das Ziel spuerbar aendert (sonst Re-Trigger
+            # jeden 150ms-Tick -> Ruckeln). Sanftes EaseOut statt harter Sprung.
+            if ($null -eq $script:LastBarTarget -or [Math]::Abs($target - $script:LastBarTarget) -gt 0.5) {
+                $script:LastBarTarget = $target
+                try {
+                    $anim = New-Object System.Windows.Media.Animation.DoubleAnimation
+                    $anim.To = $target
+                    $anim.Duration = New-Object System.Windows.Duration ([TimeSpan]::FromMilliseconds(450))
+                    $ease = New-Object System.Windows.Media.Animation.CubicEase
+                    $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+                    $anim.EasingFunction = $ease
+                    $e.xBar.BeginAnimation([System.Windows.FrameworkElement]::WidthProperty, $anim)
+                } catch {
+                    $e.xBar.Width = $target
+                }
+            }
+        }
         # Queue komplett abarbeiten - jeder Status wird angezeigt, kein Update geht verloren
         while ($s.ModuleQueue.Count -gt 0) {
             try {
@@ -1951,6 +1988,44 @@ function End-Session {
             $warn = [int]$script:SyncHash.SummaryWarn
             $err  = [int]$script:SyncHash.SummaryErr
         }
+        # --- Maschinenlesbarer Report (Fleet-Monitoring ueber mehrere Geraete) ---
+        # Komplett gekapselt: ein Fehler hier darf den Abschluss-Dialog NIE stoppen.
+        try {
+            $modules = @()
+            if ($script:SyncHash -and $script:SyncHash.Results) {
+                foreach ($k in @($script:SyncHash.Results.Keys)) {
+                    $r = $script:SyncHash.Results[$k]
+                    $modules += [PSCustomObject]@{
+                        module  = $k
+                        status  = [string]$r.Status
+                        details = [string]$r.Details
+                    }
+                }
+            }
+            $verLine = Get-Content $ScriptPath -TotalCount 1
+            $reportVer = if ($verLine -match '#\s*Version:\s*([\d.]+)') { $Matches[1] } else { "unknown" }
+            $started = $script:StartTime
+            $report = [PSCustomObject]@{
+                tool            = "JustUpdate"
+                version         = $reportVer
+                host            = $env:COMPUTERNAME
+                user            = $env:USERNAME
+                startedUtc      = if ($started) { $started.ToUniversalTime().ToString("o") } else { $null }
+                finishedUtc     = (Get-Date).ToUniversalTime().ToString("o")
+                durationSeconds = if ($started) { [int]((Get-Date) - $started).TotalSeconds } else { $null }
+                summary         = [PSCustomObject]@{ ok = $ok; warnings = $warn; errors = $err }
+                overall         = if ($err -gt 0) { "error" } elseif ($warn -gt 0) { "warning" } else { "ok" }
+                modules         = $modules
+            }
+            $jsonPath = [IO.Path]::ChangeExtension($script:LogPath, $null).TrimEnd('.') -replace 'Maintenance_', 'result_'
+            $jsonPath = "$jsonPath.json"
+            $report | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonPath -Encoding utf8
+            # Rotation: max. 20 Result-JSONs behalten (analog Log-Rotation)
+            Get-ChildItem -Path (Split-Path $jsonPath) -Filter "result_*.json" -File -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -Skip 20 |
+                ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+        } catch { }
+
         $msg    = "$ok erfolgreich, $warn Warnungen, $err Fehler"
         $icon   = if ($err -gt 0) { "Error" } elseif ($warn -gt 0) { "Warning" } else { "Information" }
         $header = if ($err -gt 0) { "Wartung mit Fehlern beendet" }
@@ -2065,6 +2140,17 @@ $Window.Add_Loaded({
     [Native.Win32]::ShowWindow($helper.Handle, 5) | Out-Null
     [Native.Win32]::SetForegroundWindow($helper.Handle) | Out-Null
     $Window.Activate()
+    # Sanftes Fade-In (280ms, EaseOut) - hochwertiger Ersteindruck statt Hartschnitt.
+    try {
+        $Window.Opacity = 0
+        $fade = New-Object System.Windows.Media.Animation.DoubleAnimation
+        $fade.From = 0; $fade.To = 1
+        $fade.Duration = New-Object System.Windows.Duration ([TimeSpan]::FromMilliseconds(280))
+        $fe = New-Object System.Windows.Media.Animation.CubicEase
+        $fe.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+        $fade.EasingFunction = $fe
+        $Window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fade)
+    } catch { $Window.Opacity = 1 }
     # Dann PowerShell-Konsole verstecken
     $consoleHwnd = [Native.Win32]::GetConsoleWindow()
     if ($consoleHwnd -ne [IntPtr]::Zero) {
