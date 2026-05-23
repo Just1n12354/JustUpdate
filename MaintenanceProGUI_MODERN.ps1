@@ -1,4 +1,4 @@
-# Version: 2.6.6
+# Version: 2.6.7
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.6' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.7' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -492,6 +492,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     <Button x:Name="xMax" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="☐" FontSize="12"/>
                     <Button x:Name="xMin" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="_" FontSize="14"/>
                     <Button x:Name="xInfo" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="i" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Acc}" Margin="0,0,4,0"/>
+                    <Button x:Name="xPatch" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="?" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Fg}" Margin="0,0,4,0" ToolTip="Patch-Notes / Versions-Historie"/>
                     <ComboBox x:Name="xLang" DockPanel.Dock="Right" Width="90" Height="26" Margin="0,0,8,0"
                               Background="{StaticResource BgCard}" Foreground="{StaticResource FgDim}"
                               BorderBrush="{StaticResource Bdr}" BorderThickness="1" FontSize="11">
@@ -767,7 +768,7 @@ try {
 # Get elements
 $e = @{}
 $allNames = @(
-    "TitleBar","xLang","xMin","xMax","xClose","xInfo","xTitleBar",
+    "TitleBar","xLang","xMin","xMax","xClose","xInfo","xPatch","xTitleBar",
     "xTag","xTitle","xDesc","xModHdr",
     "xRestore","xRestoreD","xIcoRestore","xTglRestore",
     "xDefender","xDefenderD","xIcoDefender","xTglDefender",
@@ -2515,6 +2516,144 @@ function Start-Maintenance {
     $script:UITimer.Start()
 }
 
+function Get-PatchHistoryText {
+    # Versucht zuerst lokales CHANGELOG.md (neben Skript/EXE), dann GitHub raw.
+    # Gibt String oder $null zurueck.
+    $cands = @()
+    try { $cands += (Join-Path $PSScriptRoot "CHANGELOG.md") } catch {}
+    try {
+        $exeDir = Split-Path -Parent $ScriptPath -ErrorAction SilentlyContinue
+        if ($exeDir) { $cands += (Join-Path $exeDir "CHANGELOG.md") }
+    } catch {}
+    foreach ($c in $cands) {
+        try {
+            if ($c -and (Test-Path $c)) {
+                $txt = [IO.File]::ReadAllText($c)
+                if ($txt -and $txt.Length -gt 50) { return $txt }
+            }
+        } catch {}
+    }
+    # Fallback GitHub raw — beim Kunden ist meistens nur die EXE installiert,
+    # nicht das CHANGELOG. Online holen, kurzer Timeout.
+    try {
+        $savedPP = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $resp = Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Just1n12354/JustUpdate/main/CHANGELOG.md" `
+                   -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+        $ProgressPreference = $savedPP
+        if ($resp -and $resp.Content) { return [string]$resp.Content }
+    } catch {
+        try { $ProgressPreference = $savedPP } catch {}
+    }
+    return $null
+}
+
+function Show-PatchHistory {
+    # Komplette Versions-Historie im App-Stil. Quelle: lokales CHANGELOG.md,
+    # Fallback online vom Verteil-Repo. Reines Lese-Fenster, "Schliessen" als
+    # einziger Button (Default = Enter/Esc schliesst).
+    $text = Get-PatchHistoryText
+    if (-not $text) {
+        [System.Windows.MessageBox]::Show(
+            "Patch-Notes konnten nicht geladen werden.`r`n`r`nKein lokales CHANGELOG.md gefunden und keine Internet-Verbindung zum Abruf.",
+            "Patch-Notes", "OK", "Warning") | Out-Null
+        return
+    }
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JustUpdate - Patch-Notes" Width="780" Height="640"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent">
+    <Border CornerRadius="14" Background="#111118" BorderBrush="#2a2a35" BorderThickness="1.5">
+        <Grid Margin="22,18,22,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Ellipse Width="10" Height="10" Fill="#A3243B" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Patch-Notes / Versions-Historie" Foreground="#ededf2"
+                               FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button x:Name="xX" Grid.Column="1" Content="X" Width="28" Height="28"
+                        Background="Transparent" Foreground="#8888a0" BorderThickness="0"
+                        FontWeight="Bold" Cursor="Hand"/>
+            </Grid>
+            <Border Grid.Row="1" Background="#0c0c12" CornerRadius="10"
+                    BorderBrush="#2a2a35" BorderThickness="1">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12">
+                    <TextBox x:Name="xBody"
+                             Background="Transparent" Foreground="#b8b8d0"
+                             FontFamily="Consolas" FontSize="11.5"
+                             BorderThickness="0" IsReadOnly="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Disabled"
+                             HorizontalScrollBarVisibility="Disabled"/>
+                </ScrollViewer>
+            </Border>
+            <Grid Grid.Row="2" Margin="0,14,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="xSrc" Grid.Column="0" Foreground="#52526a" FontSize="10.5"
+                           VerticalAlignment="Center"/>
+                <Button x:Name="xClose" Grid.Column="1" Content="Schliessen"
+                        Background="#25252f" Foreground="#ededf2"
+                        BorderBrush="#2a2a35" BorderThickness="1"
+                        Padding="22,9" FontSize="12" Cursor="Hand"
+                        IsDefault="True" IsCancel="True">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#2a2a35"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+"@
+    try {
+        $reader = New-Object System.Xml.XmlNodeReader $xaml
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        $body  = $dlg.FindName("xBody")
+        $close = $dlg.FindName("xClose")
+        $closeX = $dlg.FindName("xX")
+        $src   = $dlg.FindName("xSrc")
+        $body.Text = $text
+        $src.Text = "Aktuelle Version: v$($script:JUVersion)  -  Quelle: github.com/Just1n12354/JustUpdate"
+        $close.Add_Click({ $dlg.Close() })
+        $closeX.Add_Click({ $dlg.Close() })
+        # Fenster ueber das Hauptfenster zentrieren
+        try { if ($Window) { $dlg.Owner = $Window } } catch {}
+        # Verschieben mit linker Maustaste auf der Header-Zeile (kein Window-Chrome)
+        $dlg.Add_MouseLeftButtonDown({ try { $dlg.DragMove() } catch {} })
+        [void]$dlg.ShowDialog()
+    } catch {
+        # Sehr defensiv: bei XAML-Fehler einfach ein primitives Window
+        Show-JUChangelog "Patch-Notes" $text
+    }
+}
+
 function Show-SupportPrompt {
     # Custom-Dialog statt MessageBox YesNo: explizit beschriftete Buttons,
     # damit niemand reflexhaft "Ja" klickt und sich wundert, warum eine
@@ -2816,6 +2955,7 @@ function End-Session {
 $e.xStart.Add_Click({ Start-Maintenance })
 $e.xStop.Add_Click({ End-Session })
 $e.xLog.Add_Click({ Start-Process notepad.exe "`"$($script:LogPath)`"" })
+$e.xPatch.Add_Click({ Show-PatchHistory })
 
 $e.xInfo.Add_Click({
     $infoMsg = @"
