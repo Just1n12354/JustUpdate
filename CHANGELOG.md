@@ -1,5 +1,37 @@
 # JustUpdate — Changelog
 
+## v2.6.5
+
+**Bugfix: Winget scheitert nicht mehr an Tray-Apps (OBS, Epic, Steam, …).**
+- Bisher schloss der Vor-Update-Schritt nur Apps mit sichtbarem Fenster.
+  OBS, Epic Games Launcher & Co. laufen aber im Tray ohne MainWindow und
+  haben ihre Installer-Dateien gesperrt — winget brach mit Exit 1603 / 6
+  ("Datei in Verwendung") ab. Jetzt zusaetzliche Whitelist haerter
+  beendeter Tray-Blocker: `obs64`, `EpicGamesLauncher`, `EpicWebHelper`,
+  `Steam`, `steamwebhelper`, `Discord`, `Spotify`, `Teams`, `OneDrive`,
+  `Slack`, `Code`, `Cursor`, `Zoom`, `WhatsApp`, `Telegram` u.a.
+- Wartezeit nach dem Close von 2 auf 3 Sekunden — gibt File-Handles
+  zuverlaessiger Zeit zum Freigeben.
+
+**Neu: Winget-Retry pro Paket bei "Datei in Verwendung".**
+- Output-Stream wird pro Paket geparst (Name, ID, Exitcode). Bei 1603 / 6
+  oder Klartext-Meldung "von anderer Anwendung verwendet" wird **EIN
+  gezielter Retry** versucht: vorher harter Tray-Kill, dann
+  `winget upgrade --id <Paket> --exact`. Behebt den haeufigsten Lauf-
+  Fehler ohne Eingreifen des Kunden.
+- Status-Anzeige differenziert jetzt: "Teilweise aktualisiert (3 OK) -
+  noch offen: OBS Studio" statt blankes "Exit-Code -1978335188".
+
+**Support-Mail: nur noch "Senden" klicken.**
+- Outlook installiert? -> COM-Automation oeffnet eine fertige Mail mit
+  Log-Datei + result-JSON **bereits angehaengt** und vorgefuelltem Body.
+  Kunde klickt nur noch Senden. Keine Datei mehr von Hand reinziehen.
+- Kein Outlook? -> mailto-Fallback packt die **letzten 50 Log-Zeilen +
+  Modul-Status direkt in den Mail-Body** — damit der Support auch ohne
+  Attachment sofort die Diagnose hat. Log-Ordner wird zusaetzlich
+  geoeffnet (statt nur die Logdatei selektiert), damit auch
+  `result_*.json` mitgenommen werden kann.
+
 ## v2.6.4
 
 **Bugfix: Self-Update überlebt jetzt Antivirus-Quarantäne.**
