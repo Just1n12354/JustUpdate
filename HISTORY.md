@@ -1,3 +1,47 @@
+## v2.6.10
+
+**Bugfix: Mail nicht mehr zwingend Outlook 2016.**
+- Bisher: JustUpdate startete bei "Mail an Support" per COM-Automation
+  **immer Outlook**, auch wenn der Kunde laengst Thunderbird, die
+  Windows-Mail-App oder einen Webmail-Handler als Default eingestellt
+  hatte. Outlook-COM ist komplett entfernt.
+- Jetzt: `mailto:` -> Windows oeffnet die App, die der Kunde als
+  **Standard-Mail-Programm** in den Windows-Einstellungen ausgewaehlt
+  hat. Kein Default gesetzt? Windows zeigt den "App auswaehlen"-Dialog.
+- Vollstaendiger Log liegt weiterhin in der Zwischenablage - Kunde
+  drueckt einmal Strg+V im Mail-Body und hat alles drin.
+
+**Bugfix: OBS-Fehler obwohl OBS nicht offen ist.**
+- Bisher war die Tray-Kill-Liste fest auf `obs64`, `obs32`,
+  `obs-browser-page`. OBS-Studio startet aber bei Bedarf weitere
+  Helper-Prozesse (`obs-ffmpeg-mux`, `obs-amf-test`,
+  `OBS-Studio-Updater`, ...), die im Hintergrund bleiben und den
+  winget-Installer mit "Datei in Verwendung" / Exit 1603/6 ausbremsen.
+- Fix: Wildcard `obs*` matcht **alle** OBS-Familien-Prozesse auf
+  einmal. Wenn winget OBS aktualisiert, ist garantiert nichts mehr
+  am Installer-Verzeichnis aktiv.
+
+**Bugfix: Ja/Nein-Dialog tauchte noch im Notfall-Fallback auf.**
+- Wenn das schicke Custom-Dialog-XAML aus irgend einem Grund
+  scheiterte (z.B. bei sehr alten Windows-Versionen ohne Aero-
+  Composition), fiel der Code zurueck auf
+  `MessageBox.Show(..., YesNo, ...)` - genau die Ja/Nein-Box, die
+  Kunden reflexhaft falsch klicken.
+- Fix: Fallback ist jetzt selbst ein WPF-Window mit echten
+  beschrifteten Buttons ("Mail an Support senden" / "Schliessen").
+  Sollte auch DIESES scheitern, kommt **gar kein** Dialog (still
+  abgebrochen) - lieber keine Mail als die falsche durch Reflex.
+
+**Neu: Logdateien mit Version + ausfuehrlichem Kopf.**
+- Dateiname enthaelt jetzt die Version:
+  `Maintenance_2026-05-23_22-15-30_v2.6.10.log` - so weiss der
+  Support beim Anhang sofort, welche JustUpdate-Version den Lauf
+  produziert hat.
+- Logdatei-Kopf enthaelt jetzt Version, Host, Benutzer, Zeitstempel
+  und Skript-Pfad in klaren Zeilen. Auch der Live-Sitzungs-Start im
+  GUI-Log zeigt jetzt `Version: v...`, `Host: ...`, `Zeit: ...`,
+  `Module: N ausgewaehlt`.
+
 ## v2.6.9
 
 **Neu: Patch-Notes-Fenster komplett uebersichtlich neu gebaut.**

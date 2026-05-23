@@ -1,4 +1,4 @@
-# Version: 2.6.9
+# Version: 2.6.10
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.9' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.10' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -312,8 +312,23 @@ try {
     $LogDir = Join-Path $env:APPDATA "JustUpdate\logs"
     if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 }
-$script:LogPath = Join-Path $LogDir ("Maintenance_{0}.log" -f (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"))
-"" | Out-File -FilePath $script:LogPath -Encoding utf8
+$script:LogPath = Join-Path $LogDir ("Maintenance_{0}_v{1}.log" -f (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"), $script:JUVersion)
+# Metadaten-Kopf in die neue Logdatei schreiben — fuer den Support sofort
+# sichtbar welche Version, welcher Host, wann gelaufen.
+$logHeader = @"
+=================================================
+JustUpdate Logdatei
+=================================================
+Version:    v$($script:JUVersion)
+Host:       $($env:COMPUTERNAME)
+Benutzer:   $($env:USERNAME)
+Erstellt:   $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')
+Skript:     $ScriptPath
+Log-Datei:  $script:LogPath
+=================================================
+
+"@
+$logHeader | Out-File -FilePath $script:LogPath -Encoding utf8
 
 # Log-Rotation: max 10 Logs behalten, aeltere loeschen
 try {
@@ -950,8 +965,12 @@ function Close-RunningUserApps {
         "TextInputHost","RuntimeBroker","ApplicationFrameHost","SecurityHealthSystray"
     )
     # Update-Blocker: oft als Tray/Helper aktiv, sperren Installer-Dateien.
+    # Wildcards (-like) erlaubt — wichtig fuer App-Familien wie OBS, die
+    # mehrere Helper-Prozesse mitlaufen lassen (obs-ffmpeg-mux, obs-amf-test,
+    # OBS-Studio-Updater etc.), die der User nicht sieht aber den Winget-
+    # Installer mit "Datei in Verwendung" / Exit 1603/6 blockieren.
     $trayBlockers = @(
-        "obs64","obs32","obs-browser-page",
+        "obs*",                                                 # alle OBS-Familien-Prozesse
         "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
         "Steam","steamwebhelper","GameOverlayUI",
         "Discord","DiscordPTB","DiscordCanary",
@@ -980,9 +999,11 @@ function Close-RunningUserApps {
     }
     # 2) Tray-only Update-Blocker hart beenden — sie haben kein MainWindow,
     #    halten aber Installer-Dateien gelockt. Stop-Process ohne Confirm.
+    #    -like-Match unterstuetzt Wildcards (z.B. 'obs*' fuer OBS-Familie).
     Get-Process | Where-Object {
+        $pn = $_.ProcessName
         $_.Id -ne $myPid -and
-        $trayBlockers -contains $_.ProcessName
+        (@($trayBlockers | Where-Object { $pn -like $_ }).Count -gt 0)
     } | ForEach-Object {
         try {
             Stop-Process -Id $_.Id -Force -ErrorAction Stop
@@ -1064,6 +1085,7 @@ function Start-Maintenance {
         Results        = [hashtable]::Synchronized(@{})
         ClosedAppCount = $script:ClosedAppCount
         ClosedAppNames = $script:ClosedAppNames
+        AppVersion     = $script:JUVersion
     })
     $script:SyncHash = $sync
 
@@ -1258,8 +1280,10 @@ function Start-Maintenance {
         L ""
         L "============================================"
         L "  SYSTEM WARTUNG PRO - Sitzung gestartet"
-        L "  $total Module ausgewaehlt"
-        L "  $(Get-Date -F 'dd.MM.yyyy HH:mm:ss')"
+        L "  Version:  v$($sync.AppVersion)"
+        L "  Host:     $env:COMPUTERNAME ($env:USERNAME)"
+        L "  Zeit:     $(Get-Date -F 'dd.MM.yyyy HH:mm:ss')"
+        L "  Module:   $total ausgewaehlt"
         L "============================================"
         L ""
         if ($null -ne $sync.ClosedAppCount) {
@@ -1862,10 +1886,11 @@ function Start-Maintenance {
                         foreach ($f in $inUseFails) { L "    - $($f.Name)" }
                         L "  Beende Tray/Helper-Prozesse und versuche es nochmal..."
                         # Inline-Tray-Kill — wir sind im Worker-Runspace, die globale
-                        # Close-RunningUserApps ist hier nicht sichtbar. Liste muss
+                        # Close-RunningUserApps ist hier nicht sichtbar. Wildcards
+                        # via -like (z.B. 'obs*' fuer alle OBS-Helper). Liste muss
                         # mit der im Hauptskript synchron bleiben.
                         $retryBlockers = @(
-                            "obs64","obs32","obs-browser-page",
+                            "obs*",
                             "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
                             "Steam","steamwebhelper","GameOverlayUI",
                             "Discord","DiscordPTB","DiscordCanary",
@@ -1876,7 +1901,8 @@ function Start-Maintenance {
                             "Zoom","ZoomLauncher","WhatsApp","Telegram"
                         )
                         Get-Process -ErrorAction SilentlyContinue | Where-Object {
-                            $retryBlockers -contains $_.ProcessName
+                            $pn = $_.ProcessName
+                            (@($retryBlockers | Where-Object { $pn -like $_ }).Count -gt 0)
                         } | ForEach-Object {
                             try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
                         }
@@ -3055,11 +3081,61 @@ function Show-SupportPrompt {
         [void]$dlg.ShowDialog()
         return $script:_SupportChoice
     } catch {
-        # Fallback falls XAML scheitert: einfacher YesNo-Dialog (alt)
-        $r = [System.Windows.MessageBox]::Show($Body, $Title,
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Warning)
-        return ($r -eq [System.Windows.MessageBoxResult]::Yes)
+        # Fallback: WPF-Window OHNE Transparency/Custom-Chrome (robuster).
+        # Trotzdem mit explizit beschrifteten Buttons - NIE wieder Ja/Nein.
+        try {
+            Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue
+            $w = New-Object System.Windows.Window
+            $w.Title = $Title
+            $w.Width = 560
+            $w.SizeToContent = 'Height'
+            $w.WindowStartupLocation = 'CenterScreen'
+            $w.ResizeMode = 'NoResize'
+            try { if ($Window) { $w.Owner = $Window } } catch {}
+            $g = New-Object System.Windows.Controls.Grid
+            $g.Margin = '18'
+            foreach ($h in @('*','Auto')) {
+                $rd = New-Object System.Windows.Controls.RowDefinition
+                if ($h -eq 'Auto') { $rd.Height = [System.Windows.GridLength]::Auto }
+                else { $rd.Height = New-Object System.Windows.GridLength(1,'Star') }
+                [void]$g.RowDefinitions.Add($rd)
+            }
+            $tb = New-Object System.Windows.Controls.TextBlock
+            $tb.Text = $Body
+            $tb.TextWrapping = 'Wrap'
+            $tb.FontSize = 12
+            $tb.Margin = '0,0,0,16'
+            [System.Windows.Controls.Grid]::SetRow($tb, 0)
+            [void]$g.Children.Add($tb)
+            $bp = New-Object System.Windows.Controls.DockPanel
+            $bp.LastChildFill = $false
+            [System.Windows.Controls.Grid]::SetRow($bp, 1)
+            $btnMail = New-Object System.Windows.Controls.Button
+            $btnMail.Content = 'Mail an Support senden'
+            $btnMail.Padding = '14,7'
+            $btnMail.MinWidth = 180
+            [System.Windows.Controls.DockPanel]::SetDock($btnMail, 'Left')
+            $btnClose = New-Object System.Windows.Controls.Button
+            $btnClose.Content = 'Schliessen'
+            $btnClose.Padding = '20,7'
+            $btnClose.MinWidth = 110
+            $btnClose.IsDefault = $true
+            $btnClose.IsCancel = $true
+            [System.Windows.Controls.DockPanel]::SetDock($btnClose, 'Right')
+            [void]$bp.Children.Add($btnMail)
+            [void]$bp.Children.Add($btnClose)
+            [void]$g.Children.Add($bp)
+            $w.Content = $g
+            $script:_SupportChoice = $false
+            $btnMail.Add_Click({ $script:_SupportChoice = $true; $w.Close() })
+            $btnClose.Add_Click({ $script:_SupportChoice = $false; $w.Close() })
+            [void]$w.ShowDialog()
+            return $script:_SupportChoice
+        } catch {
+            # Absoluter Notfall: wenn auch WPF nicht geht -> kein Dialog,
+            # einfach "false" zurueck (kein Mail-Versand). Niemals YesNo.
+            return $false
+        }
     }
 }
 
@@ -3168,78 +3244,55 @@ function End-Session {
                         $modTxt = "`r`n--- Module mit Problemen ---`r`n" + ($bad -join "`r`n") + "`r`n"
                     }
                 }
-                # Voller Log: Outlook-Body packt alles rein (kein Limit), bei
-                # mailto landet er in der Zwischenablage als Backup.
+                # Voller Log fuer die Zwischenablage zusammenbauen — Kunde
+                # macht einmal Strg+V im Mail-Body und hat alles drin.
                 $fullLog = ""
                 try {
                     if (Test-Path $script:LogPath) {
                         $fullLog = [IO.File]::ReadAllText($script:LogPath)
                     }
                 } catch {}
-                $tailTxt = ""
+                $bodyFull = $head + $modTxt
                 if ($fullLog) {
-                    $tailTxt = "`r`n--- Log (vollstaendig) ---`r`n" + $fullLog + "`r`n"
+                    $bodyFull += "`r`n--- Log (vollstaendig) ---`r`n" + $fullLog + "`r`n"
                 }
 
-                $bodyTxt = $head + $modTxt + $tailTxt
-
-                # Weg 1: Outlook-COM mit Attachments + Log direkt im Body. Wenn
-                # Outlook installiert ist, bekommt der Kunde eine fertige Mail
-                # mit Log + JSON dran UND komplettem Logtext im Body — der
-                # Support sieht alles ohne Attachment-Klick. Nur noch 'Senden'.
-                $outlookOk = $false
+                # IMMER ueber Standard-Mail-Handler (mailto:) — respektiert die
+                # Mail-App, die der Kunde in Windows als Default gesetzt hat
+                # (Outlook, Thunderbird, Apple Mail, Web-Mail-Handler, ...).
+                # Frueher (v2.6.5 - v2.6.9): direkte Outlook-COM-Automation
+                # hat IMMER Outlook geoeffnet, auch wenn der Kunde lieber eine
+                # andere App benutzt - jetzt entfernt.
                 try {
-                    $ol = New-Object -ComObject Outlook.Application -ErrorAction Stop
-                    $mail = $ol.CreateItem(0)    # olMailItem
-                    $mail.To       = "info@itintechsolutions.ch"
-                    $mail.Subject  = $subj
-                    $mail.Body     = $bodyTxt
-                    if (Test-Path $script:LogPath) {
-                        try { [void]$mail.Attachments.Add($script:LogPath) } catch {}
-                    }
-                    if ($script:LastResultJson -and (Test-Path $script:LastResultJson)) {
-                        try { [void]$mail.Attachments.Add($script:LastResultJson) } catch {}
-                    }
-                    $mail.Display($false)        # nicht modal, User klickt Senden
-                    $outlookOk = $true
-                } catch {
-                    $outlookOk = $false
-                }
+                    # 1) Vollen Log + Diagnose in die Zwischenablage. mailto-
+                    #    URLs sind laengen-limitiert (~2000 Bytes), aber der
+                    #    Kunde kann mit einem Strg+V den gesamten Inhalt im
+                    #    Mail-Body einfuegen.
+                    try { Set-Clipboard -Value $bodyFull -ErrorAction Stop } catch {}
 
-                # Weg 2: Fallback ohne Outlook. mailto-URLs werden von vielen
-                # Handlern bei >2000 Bytes gekuerzt -> nur Header+Modul+Tail
-                # in den URI, GANZER Log landet in der Zwischenablage, damit der
-                # Kunde im Mail-Body Strg+V druecken kann. Zusaetzlich Ordner
-                # mit Log + result-JSON offen.
-                if (-not $outlookOk) {
-                    try {
-                        # Zwischenablage: voller Log-Body (so wie Outlook ihn auch
-                        # haette). Set-Clipboard ist STA-only; Wir sind hier im
-                        # UI-Thread (End-Session laeuft nach UITimer-Tick).
-                        try { Set-Clipboard -Value $bodyTxt -ErrorAction Stop } catch {}
-
-                        # Kurzfassung fuer mailto-URL (Header + Modul-Liste + Tail-30)
-                        $shortLog = ""
-                        try {
-                            if (Test-Path $script:LogPath) {
-                                $shortLog = (Get-Content $script:LogPath -Tail 30 -ErrorAction Stop) -join "`r`n"
-                            }
-                        } catch {}
-                        $hint = "`r`n--- HINWEIS ---`r`nDer vollstaendige Log ist in der Zwischenablage." +
-                                "`r`nBitte im Mail-Body Strg+V druecken, ODER die Logdatei" +
-                                "`r`naus dem geoeffneten Ordner als Anhang reinziehen.`r`n"
-                        $bodyForUri = $head + $modTxt + $hint
-                        if ($shortLog) { $bodyForUri += "`r`n--- Log (letzte Zeilen) ---`r`n$shortLog`r`n" }
-                        if ($bodyForUri.Length -gt 1800) {
-                            $bodyForUri = $bodyForUri.Substring(0, 1800) +
-                                          "`r`n[gekuerzt - voller Log in Zwischenablage]"
-                        }
-                        $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyForUri))"
-                        Start-Process $u
-                        # Ordner oeffnen — Kunde sieht Log + result_*.json nebeneinander.
-                        Start-Process explorer.exe ("`"" + (Split-Path $script:LogPath) + "`"")
-                    } catch {}
-                }
+                    # 2) Kompakter Body in der mailto-URL: Header + Modul-
+                    #    Stati + Klartext-Hinweis was zu tun ist.
+                    $hint = "`r`n--- WICHTIG ---`r`n" +
+                            "Der vollstaendige Log liegt bereits in der ZWISCHENABLAGE." +
+                            "`r`nBitte hier im Mail-Body einmal Strg+V druecken, dann Senden." +
+                            "`r`n" +
+                            "`r`nAlternativ liegt die Log-Datei im gerade geoeffneten" +
+                            "`r`nOrdner und kann als Anhang reingezogen werden.`r`n"
+                    $bodyForUri = $head + $modTxt + $hint
+                    if ($bodyForUri.Length -gt 1800) {
+                        $bodyForUri = $bodyForUri.Substring(0, 1800) +
+                                      "`r`n[gekuerzt - voller Log in Zwischenablage]"
+                    }
+                    $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyForUri))"
+                    # Start-Process auf mailto-URL -> Windows fragt den
+                    # registrierten Default-Mail-Handler. Hat der Kunde keinen
+                    # Default gesetzt, kommt der "Eine App auswaehlen"-Dialog
+                    # von Windows - genau richtig.
+                    Start-Process $u
+                    # Ordner mit Log + result_*.json oeffnen (Backup-Pfad fuer
+                    # Anhang). Sicht statt /select, damit beide Dateien sichtbar.
+                    Start-Process explorer.exe ("`"" + (Split-Path $script:LogPath) + "`"")
+                } catch {}
             }
         } else {
             [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
