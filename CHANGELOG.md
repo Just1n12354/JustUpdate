@@ -1,5 +1,25 @@
 # JustUpdate — Changelog
 
+## v2.6.9
+
+**Neu: Patch-Notes-Fenster komplett uebersichtlich neu gebaut.**
+- Vorher war alles Plain-Text in einer Box - Versionen liefen
+  ineinander, `**fett**` und `` `code` `` wurden roh angezeigt,
+  Listen nicht erkennbar.
+- Jetzt:
+  - **Sidebar links** mit klickbarer Versions-Liste - ein Klick
+    scrollt direkt zur entsprechenden Version. Aktuelle Version
+    farblich (rot) hervorgehoben.
+  - **Cards rechts**, eine pro Version, mit eigenem Header,
+    Trenner und sauber eingerueckten Stichpunkten.
+  - **Markdown wird gerendert:** `**fett**` -> echte Fett-Schrift,
+    `` `code` `` -> Consolas mit Akzent-Farbe, `- ` -> Bullet,
+    `1. ` -> Nummerierte Liste, `> ` -> Zitat-Block mit rotem
+    Strich links.
+  - **"AKTUELL"-Badge** rot rechts neben der laufenden Version,
+    damit der Kunde sofort sieht, wo er steht.
+  - Verschiebbar durch Klick auf die Header-Leiste, Esc schliesst.
+
 ## v2.6.8
 
 **Vollstaendige Versions-Historie im Patchlog.**
