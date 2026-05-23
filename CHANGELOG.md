@@ -1,5 +1,17 @@
 # JustUpdate — Changelog
 
+## v2.6.7
+
+**Neu: Patch-Notes-Button in der Titelleiste.**
+- Oben links neben dem "i"-Button gibt es jetzt einen "?"-Button.
+  Ein Klick oeffnet ein scrollbares Fenster mit der **kompletten
+  Versions-Historie** - von der ersten Version bis heute. Kunden
+  koennen jederzeit nachsehen, was sich in welcher Version geaendert
+  hat, ohne den Support anschreiben zu muessen.
+- Quelle: lokales CHANGELOG.md, Fallback Online vom Verteil-Repo
+  (`github.com/Just1n12354/JustUpdate`). Funktioniert also auch bei
+  einer reinen EXE-Installation, solange Internet da ist.
+
 ## v2.6.6
 
 **UX: "Mail senden" / "Schliessen" statt "Ja" / "Nein".**
