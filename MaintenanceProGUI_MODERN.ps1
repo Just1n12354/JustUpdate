@@ -1,4 +1,4 @@
-# Version: 2.6.3
+# Version: 2.6.4
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.3' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.4' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -115,9 +115,15 @@ if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
         $tempFile  = Join-Path $env:TEMP "JustUpdate_remote.ps1"
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $remoteUrl -OutFile $tempFile -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-        if ((Get-Item $tempFile).Length -gt 1000) {
-            $localVerLine  = Get-Content $ScriptPath -TotalCount 1
-            $remoteVerLine = Get-Content $tempFile  -TotalCount 1
+        # v2.6.4: -ErrorAction Stop auf Get-Item/Get-Content. Sonst kann ein
+        # Antivirus (z.B. HP Wolf Security) die heruntergeladene Datei sofort
+        # in Quarantaene stellen - Get-Content wirft non-terminating
+        # UnauthorizedAccessException, faellt NICHT in den catch unten und
+        # landet als roter Stacktrace auf dem Bildschirm. Mit Stop bleibt der
+        # Fluss intakt, der catch fasst den AV-Block als bekannten Fall ab.
+        if ((Get-Item $tempFile -ErrorAction Stop).Length -gt 1000) {
+            $localVerLine  = Get-Content $ScriptPath -TotalCount 1 -ErrorAction Stop
+            $remoteVerLine = Get-Content $tempFile  -TotalCount 1 -ErrorAction Stop
             $localVer = [version]'0.0.0'
             if ($localVerLine -match '#\s*Version:\s*([\d\.]+)') { try { $localVer = [version]$Matches[1] } catch {} }
             $remoteVer = $null
@@ -180,7 +186,10 @@ if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
                             }
                         } catch { }
                         # ---------------------------------------------------------
-                        Copy-Item -Path $tempFile -Destination $ScriptPath -Force
+                        # v2.6.4: -ErrorAction Stop, sonst koennte ein AV-Lock auf
+                        # tempFile das Copy zerlegen und einen roten Crash erzeugen
+                        # statt den catch-Pfad zu nehmen.
+                        Copy-Item -Path $tempFile -Destination $ScriptPath -Force -ErrorAction Stop
                         Remove-Item $tempFile -ErrorAction SilentlyContinue
                         $env:JUSTUPDATE_NO_SELFUPDATE = "1"
                         Start-Process powershell.exe -Verb RunAs `
@@ -1942,11 +1951,32 @@ function Start-Maintenance {
                              -TimeoutSec 2700 -OutEncoding $oemEnc
                 $dismExit     = $dismRun.ExitCode
                 $dismTimedOut = $dismRun.TimedOut
+
+                # v2.6.4: Retry bei Exit 32 (ERROR_SHARING_VIOLATION). Klassische
+                # Ursache: ein Antivirus (HP Wolf, Defender Real-Time, Drittanbieter)
+                # scannt parallel eine Datei aus dem Komponentenspeicher und hat sie
+                # gelockt. 45 Sekunden reichen meistens, damit der Scan fertig ist.
+                # Wir versuchen es genau einmal nochmal - laenger zu warten lohnt
+                # nicht, dann ist's vermutlich kein vorvoruebergehender Lock mehr.
+                if (-not $dismTimedOut -and $dismExit -eq 32) {
+                    L "  [HINWEIS] DISM meldet Datei-Konflikt (Exit 32) - typisch bei aktivem Antivirus."
+                    L "           Warte 45 Sekunden und versuche es nochmal..."
+                    Start-Sleep -Seconds 45
+                    $dismRun = Invoke-MonitoredProcess -FileName "dism.exe" `
+                                 -Arguments "/online /cleanup-image /restorehealth" `
+                                 -TimeoutSec 2700 -OutEncoding $oemEnc
+                    $dismExit     = $dismRun.ExitCode
+                    $dismTimedOut = $dismRun.TimedOut
+                }
+
                 $dismOk = (-not $dismTimedOut) -and ($dismExit -eq 0)
                 if ($dismOk) {
                     L "  [OK] DISM abgeschlossen"
                 } elseif ($dismTimedOut) {
                     L "  [WARNUNG] DISM reagierte 45 Min nicht - abgebrochen und uebersprungen"
+                } elseif ($dismExit -eq 32) {
+                    L "  [FEHLER] DISM auch nach Retry mit Datei-Konflikt (Exit 32)"
+                    L "         Tipp: Antivirus voruebergehend pausieren und JustUpdate erneut starten"
                 } else {
                     L "  [FEHLER] DISM fehlgeschlagen (Exit-Code: $dismExit)"
                 }
