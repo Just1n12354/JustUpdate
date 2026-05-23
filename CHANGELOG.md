@@ -1,5 +1,23 @@
 # JustUpdate — Changelog
 
+## v2.6.4
+
+**Bugfix: Self-Update überlebt jetzt Antivirus-Quarantäne.**
+- Wenn ein Antivirus (z.B. HP Wolf Security) die heruntergeladene
+  `JustUpdate_remote.ps1` aus `%TEMP%` sofort in Quarantäne stellt, warf
+  `Get-Content` einen non-terminating `UnauthorizedAccessException` — der
+  bisherige catch-Block fing ihn nicht, der User sah einen roten Stacktrace
+  beim App-Start. Jetzt mit `-ErrorAction Stop` an `Get-Item`/`Get-Content`/
+  `Copy-Item`, sodass der AV-Block sauber in den catch fällt und die App mit
+  der installierten Version weiterläuft.
+
+**Bugfix: DISM Retry bei Datei-Konflikt (Exit 32).**
+- Modul System-Reparatur bricht nicht mehr beim ersten `ERROR_SHARING_VIOLATION`
+  ab. Bei Exit 32 (typisch wenn ein Antivirus parallel scannt) wartet DISM
+  45 Sekunden und versucht es einmal nochmal. Bleibt der Lock bestehen, wird
+  ein konkreter Klartext-Hinweis im Log ausgegeben:
+  „Antivirus vorübergehend pausieren und JustUpdate erneut starten".
+
 ## v2.6.3
 
 **Neu: Optionale Updates werden jetzt mitgemacht.**
