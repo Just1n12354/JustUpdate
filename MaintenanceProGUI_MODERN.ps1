@@ -1906,6 +1906,59 @@ function Start-Maintenance {
                         } | ForEach-Object {
                             try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
                         }
+
+                        # AGGRESSIVER 2. PASS: pro fehlgeschlagenes Paket auch
+                        # alle Prozesse killen, deren EXE-Pfad zum Paket-Namen
+                        # passt. Behebt den Fall aus dem User-Log: OBS-Studio
+                        # hatte Helper laufen, die NICHT mit "obs" beginnen
+                        # (Auto-Update-Service, Streamlabs-Plugin, etc.) - die
+                        # tauchten nicht in der Wildcard-Liste auf, blockierten
+                        # den Installer aber trotzdem.
+                        foreach ($pkg in $inUseFails) {
+                            # Paket-Schluesselwort raus: "OBSProject.OBSStudio"
+                            # -> Suchbegriffe "OBSStudio", "OBSProject", "OBS"
+                            $kw = @()
+                            if ($pkg.Name) { $kw += ($pkg.Name -split '\W+' | Where-Object { $_.Length -ge 3 }) }
+                            if ($pkg.Id)   { $kw += ($pkg.Id   -split '[\W_]+' | Where-Object { $_.Length -ge 3 }) }
+                            $kw = @($kw | Sort-Object -Unique)
+                            $killed = New-Object System.Collections.Generic.List[string]
+                            foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
+                                try {
+                                    $path = $p.Path
+                                    if (-not $path) { continue }
+                                    foreach ($k in $kw) {
+                                        if ($path -match [regex]::Escape($k)) {
+                                            try {
+                                                Stop-Process -Id $p.Id -Force -ErrorAction Stop
+                                                [void]$killed.Add("$($p.ProcessName) (Pfad: $path)")
+                                            } catch {}
+                                            break
+                                        }
+                                    }
+                                } catch {}
+                            }
+                            # Windows-Services mit passendem Namen stoppen — OBS-
+                            # Studio installiert keinen Service standardmaessig,
+                            # aber Plugins/Updater-Tools tun es manchmal.
+                            foreach ($k in $kw) {
+                                try {
+                                    Get-Service -ErrorAction SilentlyContinue |
+                                        Where-Object { $_.Name -like "*$k*" -or $_.DisplayName -like "*$k*" } |
+                                        ForEach-Object {
+                                            try {
+                                                if ($_.Status -eq 'Running') {
+                                                    Stop-Service -Name $_.Name -Force -ErrorAction Stop
+                                                    [void]$killed.Add("Service: $($_.Name)")
+                                                }
+                                            } catch {}
+                                        }
+                                } catch {}
+                            }
+                            if ($killed.Count -gt 0) {
+                                L "  Zusaetzlich beendet fuer $($pkg.Name):"
+                                foreach ($k in $killed) { L "    - $k" }
+                            }
+                        }
                         Start-Sleep -Seconds 3
                         foreach ($pkg in $inUseFails) {
                             if (IsStopped) { break }
@@ -2789,6 +2842,14 @@ function Show-PatchHistory {
 
         # --- Rendern: Cards rechts, Sidebar-Eintraege links ---
         foreach ($sec in $sections) {
+            # Title parsen: "v2.6.10 (23.05.2026 22:42)" -> Version + Datum
+            $vCore = $sec.Title
+            $vDate = ""
+            if ($sec.Title -match '^(.+?)\s*\((.+?)\)\s*$') {
+                $vCore = $Matches[1].Trim()
+                $vDate = $Matches[2].Trim()
+            }
+
             # Card (Border + StackPanel)
             $card = New-Object System.Windows.Controls.Border
             $card.CornerRadius = New-Object System.Windows.CornerRadius(12)
@@ -2803,13 +2864,13 @@ function Show-PatchHistory {
             $cardSp = New-Object System.Windows.Controls.StackPanel
             $card.Child = $cardSp
 
-            # Version-Header (mit Badge fuer aktuelle Version)
+            # Version-Header: Version (gross) + Datum (gedimmt daneben) + AKTUELL-Badge
             $hdrRow = New-Object System.Windows.Controls.StackPanel
             $hdrRow.Orientation = 'Horizontal'
             $hdrRow.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
 
             $vTitle = New-Object System.Windows.Controls.TextBlock
-            $vTitle.Text = $sec.Title
+            $vTitle.Text = $vCore
             $vTitle.FontSize = 17
             $vTitle.FontWeight = 'Bold'
             $vTitle.VerticalAlignment = 'Center'
@@ -2817,7 +2878,26 @@ function Show-PatchHistory {
                 [System.Windows.Media.Color]::FromRgb(0xed,0xed,0xf2))
             [void]$hdrRow.Children.Add($vTitle)
 
-            if ($sec.Title -match '^v?' + [regex]::Escape($curVer) + '\b') {
+            # Datum-Pille neben der Version
+            if ($vDate) {
+                $vDateBox = New-Object System.Windows.Controls.Border
+                $vDateBox.CornerRadius = New-Object System.Windows.CornerRadius(6)
+                $vDateBox.Background = New-Object System.Windows.Media.SolidColorBrush(
+                    [System.Windows.Media.Color]::FromRgb(0x25,0x25,0x2f))
+                $vDateBox.Padding = New-Object System.Windows.Thickness(8, 2, 8, 3)
+                $vDateBox.Margin = New-Object System.Windows.Thickness(12, 3, 0, 0)
+                $vDateBox.VerticalAlignment = 'Center'
+                $vDateTb = New-Object System.Windows.Controls.TextBlock
+                $vDateTb.Text = $vDate
+                $vDateTb.FontSize = 11
+                $vDateTb.FontFamily = New-Object System.Windows.Media.FontFamily('Consolas')
+                $vDateTb.Foreground = New-Object System.Windows.Media.SolidColorBrush(
+                    [System.Windows.Media.Color]::FromRgb(0xb9,0xc0,0xcc))
+                $vDateBox.Child = $vDateTb
+                [void]$hdrRow.Children.Add($vDateBox)
+            }
+
+            if ($vCore -match '^v?' + [regex]::Escape($curVer) + '\b') {
                 $badge = New-Object System.Windows.Controls.Border
                 $badge.CornerRadius = New-Object System.Windows.CornerRadius(8)
                 $badge.Background = New-Object System.Windows.Media.SolidColorBrush(
@@ -2938,9 +3018,9 @@ function Show-PatchHistory {
 
             [void]$main.Children.Add($card)
 
-            # --- Sidebar-Eintrag ---
+            # --- Sidebar-Eintrag --- nur Version (kompakt), kein Datum
             $sbBtn = New-Object System.Windows.Controls.Button
-            $sbBtn.Content = $sec.Title
+            $sbBtn.Content = $vCore
             $sbBtn.HorizontalContentAlignment = 'Left'
             $sbBtn.Padding = New-Object System.Windows.Thickness(10, 7, 8, 7)
             $sbBtn.Margin = New-Object System.Windows.Thickness(0, 1, 0, 1)
@@ -2952,7 +3032,7 @@ function Show-PatchHistory {
             $sbBtn.Foreground = New-Object System.Windows.Media.SolidColorBrush(
                 [System.Windows.Media.Color]::FromRgb(0xb9,0xc0,0xcc))
             # Aktuelle Version optisch markieren
-            if ($sec.Title -match '^v?' + [regex]::Escape($curVer) + '\b') {
+            if ($vCore -match '^v?' + [regex]::Escape($curVer) + '\b') {
                 $sbBtn.Background = New-Object System.Windows.Media.SolidColorBrush(
                     [System.Windows.Media.Color]::FromRgb(0xA3,0x24,0x3B))
                 $sbBtn.Foreground = New-Object System.Windows.Media.SolidColorBrush(
