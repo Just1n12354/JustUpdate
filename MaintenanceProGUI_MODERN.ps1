@@ -1,4 +1,4 @@
-# Version: 2.6.5
+# Version: 2.6.6
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.5' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.6' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -965,7 +965,7 @@ function Close-RunningUserApps {
         "Telegram"
     )
     $myPid = $PID
-    $closed = 0
+    $closedNames = New-Object System.Collections.Generic.HashSet[string]
     # 1) Apps mit sichtbarem Fenster sanft schliessen (CloseMainWindow -> "Speichern?")
     Get-Process | Where-Object {
         $_.Id -ne $myPid -and
@@ -974,7 +974,7 @@ function Close-RunningUserApps {
     } | ForEach-Object {
         try {
             [void]$_.CloseMainWindow()
-            $closed++
+            [void]$closedNames.Add($_.ProcessName)
         } catch {}
     }
     # 2) Tray-only Update-Blocker hart beenden — sie haben kein MainWindow,
@@ -985,13 +985,20 @@ function Close-RunningUserApps {
     } | ForEach-Object {
         try {
             Stop-Process -Id $_.Id -Force -ErrorAction Stop
-            $closed++
+            [void]$closedNames.Add($_.ProcessName)
         } catch {}
     }
     # Kurz warten, damit Apps ihre "Speichern?"-Dialoge anzeigen koennen und
     # File-Handles freigegeben werden.
     Start-Sleep -Seconds 3
-    return $closed
+    # Names-Liste sortiert zurueck, damit der User im Log sieht WAS geschlossen
+    # wurde (statt nur eine Zahl). PSCustomObject fuer alte Aufrufer kompatibel:
+    # [int] cast greift auf .Count zu (impliziet via PowerShell-Coercion bleibt
+    # aber unsauber) — daher explizit beides bereitstellen.
+    return [pscustomobject]@{
+        Count = $closedNames.Count
+        Names = @($closedNames | Sort-Object)
+    }
 }
 
 function Start-Maintenance {
@@ -1009,12 +1016,16 @@ function Start-Maintenance {
             [System.Windows.MessageBoxButton]::YesNo,
             [System.Windows.MessageBoxImage]::Warning)
         if ($answer -eq [System.Windows.MessageBoxResult]::Yes) {
-            $script:ClosedAppCount = Close-RunningUserApps
+            $closeResult = Close-RunningUserApps
+            $script:ClosedAppCount = [int]$closeResult.Count
+            $script:ClosedAppNames = @($closeResult.Names)
         } else {
             $script:ClosedAppCount = -1
+            $script:ClosedAppNames = @()
         }
     } else {
         $script:ClosedAppCount = $null
+        $script:ClosedAppNames = $null
     }
 
     Reset-AllIcons
@@ -1051,6 +1062,7 @@ function Start-Maintenance {
         ModuleQueue    = [System.Collections.ArrayList]::Synchronized([System.Collections.ArrayList]::new())
         Results        = [hashtable]::Synchronized(@{})
         ClosedAppCount = $script:ClosedAppCount
+        ClosedAppNames = $script:ClosedAppNames
     })
     $script:SyncHash = $sync
 
@@ -1251,7 +1263,15 @@ function Start-Maintenance {
         L ""
         if ($null -ne $sync.ClosedAppCount) {
             if ($sync.ClosedAppCount -ge 0) {
-                L "  Vor-Update-Schritt: $($sync.ClosedAppCount) laufende Programm(e) geschlossen"
+                $names = @($sync.ClosedAppNames)
+                if ($sync.ClosedAppCount -eq 0) {
+                    L "  Vor-Update-Schritt: keine laufenden Programme zum Schliessen gefunden"
+                } else {
+                    L "  Vor-Update-Schritt: $($sync.ClosedAppCount) Programm(e) geschlossen"
+                    if ($names.Count -gt 0) {
+                        L "    -> $($names -join ', ')"
+                    }
+                }
             } else {
                 L "  Vor-Update-Schritt: User hat das Schliessen abgelehnt - Updates koennen an gesperrten Dateien scheitern"
             }
@@ -1260,12 +1280,34 @@ function Start-Maintenance {
 
         # ── Connectivity-Precheck ── klare Offline-Meldung EINMAL, statt spaeter
         # mehrere kryptische Timeouts in Defender/WinUpdate/Winget/Store.
+        # Robust: 1) Windows NLM (was Windows selbst nutzt fuer die Internet-
+        # Anzeige), 2) mehrere Hosts probieren, 3) ausreichend Timeout. v2.6.4
+        # hatte einen Single-HEAD auf microsoft.com mit 5s -> bei DNS-Lag oder
+        # IPv6-Wackelei kam faelschlich "Offline".
         $online = $false
+        # 1) NetworkListManager (COM) — sagt was Windows als verbunden sieht.
         try {
-            $req = [System.Net.WebRequest]::Create("https://www.microsoft.com")
-            $req.Method = "HEAD"; $req.Timeout = 5000
-            $resp = $req.GetResponse(); $resp.Close(); $online = $true
-        } catch { $online = $false }
+            $nlmType = [Type]::GetTypeFromCLSID([Guid]"DCB00C01-570F-4A9B-8D69-199FDBA5723B")
+            if ($nlmType) {
+                $nlm = [Activator]::CreateInstance($nlmType)
+                # IsConnectedToInternet — boolean
+                if ($nlm.IsConnectedToInternet) { $online = $true }
+                try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($nlm) | Out-Null } catch {}
+            }
+        } catch {}
+        # 2) HTTP-Test als zweite Meinung gegen mehrere Hosts (gibt true bei
+        #    EINEM Treffer). 8s Timeout pro Host, jeder Host sequentiell aber
+        #    Abbruch sobald einer antwortet -> max ~8s, meist <1s.
+        if (-not $online) {
+            foreach ($host_ in @("https://www.microsoft.com","https://github.com","https://www.cloudflare.com")) {
+                try {
+                    $req = [System.Net.WebRequest]::Create($host_)
+                    $req.Method = "HEAD"; $req.Timeout = 8000
+                    $resp = $req.GetResponse(); $resp.Close()
+                    $online = $true; break
+                } catch {}
+            }
+        }
         if ($online) {
             L "  Internet-Verbindung: OK"
         } else {
@@ -2473,6 +2515,115 @@ function Start-Maintenance {
     $script:UITimer.Start()
 }
 
+function Show-SupportPrompt {
+    # Custom-Dialog statt MessageBox YesNo: explizit beschriftete Buttons,
+    # damit niemand reflexhaft "Ja" klickt und sich wundert, warum eine
+    # Mail-Vorschau aufgeht. "Schliessen" ist Default (Enter-Taste) -> ein
+    # versehentliches Bestaetigen oeffnet NICHT die Mail.
+    param(
+        [string]$Title,
+        [string]$Body,
+        [string]$Level = "warn"   # "warn" | "err" | "ok"
+    )
+    $headerColor = if ($Level -eq "err") { "#EF4444" }
+                   elseif ($Level -eq "warn") { "#e8a020" }
+                   else { "#22C55E" }
+    [xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JustUpdate" Width="560" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False">
+    <Border CornerRadius="14" Background="#18181f" BorderBrush="#2a2a35" BorderThickness="1.5">
+        <Grid Margin="22,20,22,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="xHdr" Grid.Row="0" FontSize="15" FontWeight="Bold"
+                       Margin="0,0,0,12"/>
+            <ScrollViewer Grid.Row="1" MaxHeight="320" VerticalScrollBarVisibility="Auto"
+                          Margin="0,0,0,18">
+                <TextBlock x:Name="xBody" Foreground="#ededf2" FontSize="12"
+                           TextWrapping="Wrap" LineHeight="18"/>
+            </ScrollViewer>
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="xMail" Grid.Column="0" Content="Mail an Support senden"
+                        Background="#A3243B" Foreground="#ffffff" BorderThickness="0"
+                        Padding="18,9" FontWeight="SemiBold" FontSize="12"
+                        Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#bd2b46"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button x:Name="xClose" Grid.Column="2" Content="Schliessen"
+                        Background="#25252f" Foreground="#ededf2" BorderThickness="1"
+                        BorderBrush="#2a2a35" Padding="22,9" FontSize="12"
+                        IsDefault="True" IsCancel="True" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#2a2a35"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
+"@
+    try {
+        $reader = New-Object System.Xml.XmlNodeReader $xaml
+        $dlg = [Windows.Markup.XamlReader]::Load($reader)
+        $hdr  = $dlg.FindName("xHdr")
+        $body = $dlg.FindName("xBody")
+        $mail = $dlg.FindName("xMail")
+        $close = $dlg.FindName("xClose")
+        $hdr.Text = $Title
+        $hdr.Foreground = (New-Object System.Windows.Media.SolidColorBrush (
+            [System.Windows.Media.ColorConverter]::ConvertFromString($headerColor)))
+        $body.Text = $Body
+        $script:_SupportChoice = $false
+        $mail.Add_Click({ $script:_SupportChoice = $true; $dlg.Close() })
+        $close.Add_Click({ $script:_SupportChoice = $false; $dlg.Close() })
+        try { if ($Window) { $dlg.Owner = $Window } } catch {}
+        [void]$dlg.ShowDialog()
+        return $script:_SupportChoice
+    } catch {
+        # Fallback falls XAML scheitert: einfacher YesNo-Dialog (alt)
+        $r = [System.Windows.MessageBox]::Show($Body, $Title,
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        return ($r -eq [System.Windows.MessageBoxResult]::Yes)
+    }
+}
+
 function End-Session {
     param([switch]$completed)
     if ($script:UITimer)    { $script:UITimer.Stop() }
@@ -2551,11 +2702,12 @@ function End-Session {
                 $msg += "`n`n--- Was genau ---`n`n$details"
             }
             $msg += "`n`nVollstaendige Details: Button 'LOG OEFFNEN'."
-            $msg += "`n`nBericht jetzt an den Support senden?"
-            $msg += "`n(Mail mit Log wird vorbereitet - du musst nur noch 'Senden' klicken.)"
-            $ans = [System.Windows.MessageBox]::Show($msg, $header,
-                [System.Windows.MessageBoxButton]::YesNo, $icon)
-            if ($ans -eq [System.Windows.MessageBoxResult]::Yes) {
+            $msg += "`n`nMit 'Mail an Support senden' wird automatisch eine Mail "
+            $msg += "`nmit Log + Diagnose vorbereitet - du musst nur noch auf "
+            $msg += "`n'Senden' klicken. Mit 'Schliessen' passiert nichts."
+            $lvl = if ($err -gt 0) { "err" } else { "warn" }
+            $sendMail = Show-SupportPrompt -Title $header -Body $msg -Level $lvl
+            if ($sendMail) {
                 # Mail-Header / Body bauen — fuer BEIDE Wege (Outlook + mailto) identisch.
                 $subj = "JustUpdate Bericht - $($env:COMPUTERNAME) - $ok OK / $warn Warn / $err Fehler"
                 $head = "Automatischer JustUpdate-Bericht`r`n`r`n" +
@@ -2577,21 +2729,25 @@ function End-Session {
                         $modTxt = "`r`n--- Module mit Problemen ---`r`n" + ($bad -join "`r`n") + "`r`n"
                     }
                 }
-                # Log-Tail: letzte ~50 Zeilen, fuer Support-Diagnose ohne Attachment.
-                $tailTxt = ""
+                # Voller Log: Outlook-Body packt alles rein (kein Limit), bei
+                # mailto landet er in der Zwischenablage als Backup.
+                $fullLog = ""
                 try {
                     if (Test-Path $script:LogPath) {
-                        $tailLines = Get-Content $script:LogPath -Tail 50 -ErrorAction Stop
-                        $tailTxt = "`r`n--- Log (letzte $($tailLines.Count) Zeilen) ---`r`n" +
-                                   ($tailLines -join "`r`n") + "`r`n"
+                        $fullLog = [IO.File]::ReadAllText($script:LogPath)
                     }
                 } catch {}
+                $tailTxt = ""
+                if ($fullLog) {
+                    $tailTxt = "`r`n--- Log (vollstaendig) ---`r`n" + $fullLog + "`r`n"
+                }
 
                 $bodyTxt = $head + $modTxt + $tailTxt
 
-                # Weg 1: Outlook-COM mit Attachments. Wenn Outlook installiert ist,
-                # bekommt der Kunde eine fertige Mail mit Log + JSON dran — nur noch
-                # 'Senden' klicken. Keine Datei mehr per Hand anhaengen.
+                # Weg 1: Outlook-COM mit Attachments + Log direkt im Body. Wenn
+                # Outlook installiert ist, bekommt der Kunde eine fertige Mail
+                # mit Log + JSON dran UND komplettem Logtext im Body — der
+                # Support sieht alles ohne Attachment-Klick. Nur noch 'Senden'.
                 $outlookOk = $false
                 try {
                     $ol = New-Object -ComObject Outlook.Application -ErrorAction Stop
@@ -2611,24 +2767,37 @@ function End-Session {
                     $outlookOk = $false
                 }
 
-                # Weg 2: Fallback ohne Outlook. mailto mit Log-Tail direkt im Body —
-                # der Standard-Mail-Client (Thunderbird, Webmail-Handler etc.) bekommt
-                # alles Diagnose-relevante schon im Text. Datei landet zusaetzlich
-                # via Explorer im Blick, falls jemand die volle Datei dran will.
+                # Weg 2: Fallback ohne Outlook. mailto-URLs werden von vielen
+                # Handlern bei >2000 Bytes gekuerzt -> nur Header+Modul+Tail
+                # in den URI, GANZER Log landet in der Zwischenablage, damit der
+                # Kunde im Mail-Body Strg+V druecken kann. Zusaetzlich Ordner
+                # mit Log + result-JSON offen.
                 if (-not $outlookOk) {
                     try {
-                        # mailto-URLs werden von vielen Handlern bei >2000 Bytes
-                        # abgeschnitten. Body daher ggf. trimmen — voller Log liegt
-                        # ja zusaetzlich als Datei im geoeffneten Ordner.
-                        $bodyForUri = $bodyTxt
+                        # Zwischenablage: voller Log-Body (so wie Outlook ihn auch
+                        # haette). Set-Clipboard ist STA-only; Wir sind hier im
+                        # UI-Thread (End-Session laeuft nach UITimer-Tick).
+                        try { Set-Clipboard -Value $bodyTxt -ErrorAction Stop } catch {}
+
+                        # Kurzfassung fuer mailto-URL (Header + Modul-Liste + Tail-30)
+                        $shortLog = ""
+                        try {
+                            if (Test-Path $script:LogPath) {
+                                $shortLog = (Get-Content $script:LogPath -Tail 30 -ErrorAction Stop) -join "`r`n"
+                            }
+                        } catch {}
+                        $hint = "`r`n--- HINWEIS ---`r`nDer vollstaendige Log ist in der Zwischenablage." +
+                                "`r`nBitte im Mail-Body Strg+V druecken, ODER die Logdatei" +
+                                "`r`naus dem geoeffneten Ordner als Anhang reinziehen.`r`n"
+                        $bodyForUri = $head + $modTxt + $hint
+                        if ($shortLog) { $bodyForUri += "`r`n--- Log (letzte Zeilen) ---`r`n$shortLog`r`n" }
                         if ($bodyForUri.Length -gt 1800) {
                             $bodyForUri = $bodyForUri.Substring(0, 1800) +
-                                          "`r`n`r`n[gekuerzt - vollstaendiger Log ist als Datei im geoeffneten Ordner]"
+                                          "`r`n[gekuerzt - voller Log in Zwischenablage]"
                         }
                         $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyForUri))"
                         Start-Process $u
-                        # Ordner oeffnen statt /select — der Kunde sieht Log + result_*.json
-                        # nebeneinander und kann beides anhaengen, falls noetig.
+                        # Ordner oeffnen — Kunde sieht Log + result_*.json nebeneinander.
                         Start-Process explorer.exe ("`"" + (Split-Path $script:LogPath) + "`"")
                     } catch {}
                 }
