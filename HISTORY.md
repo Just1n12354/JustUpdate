@@ -1,3 +1,24 @@
+## v2.6.5
+
+**Bugfix: Winget scheitert nicht mehr an Tray-Apps (OBS, Epic, Steam, …).**
+- Vor-Update-Schritt erweitert: zusaetzliche Whitelist haerter beendeter
+  Tray-Blocker (obs64, EpicGamesLauncher, EpicWebHelper, Steam, Discord,
+  Spotify, Teams, OneDrive, Slack, Code, Cursor, Zoom, WhatsApp,
+  Telegram u.a.). Bisher liefen die ohne MainWindow im Tray weiter und
+  sperrten Installer-Dateien -> winget brach mit Exit 1603 / 6 ab.
+
+**Neu: Winget-Retry pro Paket bei "Datei in Verwendung".**
+- Output-Stream wird pro Paket geparst. Bei 1603 / 6 oder Klartext
+  "von anderer Anwendung verwendet" -> EIN gezielter Retry nach
+  Tray-Kill (`winget upgrade --id <Paket> --exact`). Status zeigt
+  jetzt "Teilweise aktualisiert (3 OK) - noch offen: OBS Studio" statt
+  Exit-Code-Zahl.
+
+**Support-Mail: nur noch "Senden" klicken.**
+- Outlook installiert -> COM-Automation oeffnet fertige Mail mit Log +
+  result-JSON bereits angehaengt. Kein Outlook -> mailto-Fallback packt
+  die letzten 50 Log-Zeilen + Modul-Status direkt in den Mail-Body.
+
 ## v2.6.4
 
 **Bugfix: Self-Update überlebt jetzt Antivirus-Quarantäne.**

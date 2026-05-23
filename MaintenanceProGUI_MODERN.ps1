@@ -1,4 +1,4 @@
-# Version: 2.6.4
+# Version: 2.6.5
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.4' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.5' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -937,7 +937,10 @@ $script:ClockTimer = $null
 $script:StartTime  = $null
 
 function Close-RunningUserApps {
-    # Schliesst alle GUI-Prozesse mit Hauptfenster — sanft via CloseMainWindow().
+    # Schliesst GUI-Prozesse mit Hauptfenster — sanft via CloseMainWindow().
+    # Zusaetzlich: bekannte Update-Blocker, die im Tray OHNE MainWindow laufen
+    # (OBS-Helper, Epic-Launcher etc.) — die sperren ihre Installer-Dateien und
+    # liessen v2.6.4 mit winget Exit 1603/6 (file-in-use) auflaufen.
     # Ausgenommen: System-Prozesse, Shell, JustUpdate selbst.
     $whitelist = @(
         "explorer","dwm","conhost","powershell","pwsh","cmd","WindowsTerminal",
@@ -945,8 +948,25 @@ function Close-RunningUserApps {
         "fontdrvhost","SearchHost","StartMenuExperienceHost","ShellExperienceHost",
         "TextInputHost","RuntimeBroker","ApplicationFrameHost","SecurityHealthSystray"
     )
+    # Update-Blocker: oft als Tray/Helper aktiv, sperren Installer-Dateien.
+    $trayBlockers = @(
+        "obs64","obs32","obs-browser-page",
+        "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
+        "Steam","steamwebhelper","GameOverlayUI",
+        "Discord","DiscordPTB","DiscordCanary",
+        "Spotify","SpotifyWebHelper",
+        "Teams","ms-teams","msedgewebview2",
+        "OneDrive","FileCoAuth","FileSyncHelper",
+        "Slack",
+        "Code","Code - Insiders",
+        "Cursor",
+        "Zoom","ZoomLauncher",
+        "WhatsApp",
+        "Telegram"
+    )
     $myPid = $PID
     $closed = 0
+    # 1) Apps mit sichtbarem Fenster sanft schliessen (CloseMainWindow -> "Speichern?")
     Get-Process | Where-Object {
         $_.Id -ne $myPid -and
         $_.MainWindowHandle -ne 0 -and
@@ -957,15 +977,31 @@ function Close-RunningUserApps {
             $closed++
         } catch {}
     }
-    # Kurz warten, damit Apps ihre "Speichern?"-Dialoge anzeigen koennen
-    Start-Sleep -Seconds 2
+    # 2) Tray-only Update-Blocker hart beenden — sie haben kein MainWindow,
+    #    halten aber Installer-Dateien gelockt. Stop-Process ohne Confirm.
+    Get-Process | Where-Object {
+        $_.Id -ne $myPid -and
+        $trayBlockers -contains $_.ProcessName
+    } | ForEach-Object {
+        try {
+            Stop-Process -Id $_.Id -Force -ErrorAction Stop
+            $closed++
+        } catch {}
+    }
+    # Kurz warten, damit Apps ihre "Speichern?"-Dialoge anzeigen koennen und
+    # File-Handles freigegeben werden.
+    Start-Sleep -Seconds 3
     return $closed
 }
 
 function Start-Maintenance {
     # Vor Update-Modulen: User fragen, ob laufende Apps geschlossen werden sollen.
     # Verhindert dass Update-Installer sich an gesperrten Dateien aufhaengen.
-    $needsClose = ([bool]$e.xTglWinUpdate.IsChecked) -or ([bool]$e.xTglStore.IsChecked)
+    # Winget mit reingenommen: Hauptursache fuer file-in-use sind Tray-Apps wie
+    # OBS/Epic, die ueber winget aktualisiert werden.
+    $needsClose = ([bool]$e.xTglWinUpdate.IsChecked) -or `
+                  ([bool]$e.xTglStore.IsChecked) -or `
+                  ([bool]$e.xTglWinget.IsChecked)
     if ($needsClose) {
         $answer = [System.Windows.MessageBox]::Show(
             (T "CloseAppsMsg"),
@@ -1725,47 +1761,135 @@ function Start-Maintenance {
                     L "  Starte Upgrade aller Apps..."
                     L ""
 
-                    # Process starten, Output live streamen UND Laufzeit ueberwachen.
-                    # 60-Min-Timeout: ein einzelner Riesen-Download (z.B. Game-Engines
-                    # / grosse Suites) oder ein haengender Installer darf die Wartung
-                    # nicht endlos blockieren - dann lieber dieses Modul ueberspringen
-                    # (Bug: 145 Min ohne Reaktion).
+                    # Inline-Parser: Output-Stream auswerten und pro Paket Status sammeln.
+                    # Wichtig fuer in-use-Retry: wir muessen wissen WELCHE Apps wegen
+                    # "Datei in Verwendung" gescheitert sind (Exit 1603/6 oder Klartext).
+                    $parseWg = {
+                        param([string[]]$Lines)
+                        $fail = @(); $ok = @(); $cur = $null
+                        $inUseRx = 'einer anderen Anwendung verwendet|in use by another|currently being used|being used by another'
+                        foreach ($raw in $Lines) {
+                            $t = "$raw".Trim()
+                            if ($t -match '^\(\d+/\d+\)\s+(?:Gefunden|Found|Trouve)\s+(.+?)\s+\[([^\]]+)\]') {
+                                if ($cur) { $fail += $cur }
+                                $cur = @{ Name = $Matches[1].Trim(); Id = $Matches[2].Trim(); Exit = $null; InUse = $false }
+                            }
+                            elseif ($t -match $inUseRx) {
+                                if ($cur) { $cur.InUse = $true }
+                            }
+                            elseif ($t -match '(?:Installation fehlgeschlagen mit Exitcode|Installer failed with exit code|Installation echouee avec le code de sortie)\D*(-?\d+)') {
+                                if ($cur) {
+                                    $cur.Exit = [int]$Matches[1]
+                                    if ($cur.Exit -in 1603,6,1618,1638) { $cur.InUse = $true }
+                                    $fail += $cur; $cur = $null
+                                }
+                            }
+                            elseif ($t -match 'Successfully installed|Erfolgreich installiert|Installation reussie') {
+                                if ($cur) { $ok += $cur; $cur = $null }
+                            }
+                        }
+                        if ($cur) { $fail += $cur }
+                        return [pscustomobject]@{ Failed = $fail; Installed = $ok }
+                    }
+
+                    # 1. Hauptlauf
+                    # 60-Min-Timeout: ein haengender Installer darf die Wartung nicht
+                    # endlos blockieren.
                     $wgRun = Invoke-MonitoredProcess -FileName $wg `
                                -Arguments "upgrade --all --include-unknown --disable-interactivity --accept-source-agreements --accept-package-agreements" `
                                -TimeoutSec 3600
-                    # Result-Detection braucht alle Zeilen; Live-Log filtert nur Block-Progress.
                     $wgUpgradeOutput = $wgRun.Lines
                     $wgTimedOut = $wgRun.TimedOut
                     $exitCode   = $wgRun.ExitCode
-                    # winget gibt bei "nichts zu tun" haeufig Exit 0 zurueck mit Sprach-Meldung
-                    # "Es wurde kein installiertes Paket gefunden" (DE) / "No installed package" (EN) /
-                    # "Aucun package installe" (FR). Dann ist nichts aktualisiert worden.
                     $combined = ($wgUpgradeOutput -join " ")
                     $nothingToDo = $combined -match 'kein installiertes Paket|No installed package|Aucun package install'
-                    $installedAny = $combined -match 'Successfully installed|Erfolgreich installiert|Installation reussie'
+                    $parsed = & $parseWg $wgUpgradeOutput
+                    $installedAny = ($parsed.Installed.Count -gt 0) -or ($combined -match 'Successfully installed|Erfolgreich installiert|Installation reussie')
+                    $inUseFails = @($parsed.Failed | Where-Object { $_.InUse })
+
+                    # 2. Retry-Pass NUR fuer in-use-Failures (1603/6/Klartext). Hartes
+                    #    Stop-Process auf Tray-Reste, dann gezielt diese Pakete nochmal.
+                    #    Behebt den Fall aus v2.6.4: OBS/Epic-Helper bleiben im Tray,
+                    #    erster Lauf scheitert, zweiter Lauf nach Force-Kill geht durch.
+                    $retryInstalled = @()
+                    $retryStillFailed = @()
+                    if (-not $wgTimedOut -and $inUseFails.Count -gt 0) {
+                        L ""
+                        L "  [HINWEIS] $($inUseFails.Count) App(s) wegen 'Datei in Verwendung' fehlgeschlagen:"
+                        foreach ($f in $inUseFails) { L "    - $($f.Name)" }
+                        L "  Beende Tray/Helper-Prozesse und versuche es nochmal..."
+                        # Inline-Tray-Kill — wir sind im Worker-Runspace, die globale
+                        # Close-RunningUserApps ist hier nicht sichtbar. Liste muss
+                        # mit der im Hauptskript synchron bleiben.
+                        $retryBlockers = @(
+                            "obs64","obs32","obs-browser-page",
+                            "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
+                            "Steam","steamwebhelper","GameOverlayUI",
+                            "Discord","DiscordPTB","DiscordCanary",
+                            "Spotify","SpotifyWebHelper",
+                            "Teams","ms-teams","msedgewebview2",
+                            "OneDrive","FileCoAuth","FileSyncHelper",
+                            "Slack","Code","Code - Insiders","Cursor",
+                            "Zoom","ZoomLauncher","WhatsApp","Telegram"
+                        )
+                        Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                            $retryBlockers -contains $_.ProcessName
+                        } | ForEach-Object {
+                            try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
+                        }
+                        Start-Sleep -Seconds 3
+                        foreach ($pkg in $inUseFails) {
+                            if (IsStopped) { break }
+                            L ""
+                            L "  Retry: $($pkg.Name) [$($pkg.Id)]"
+                            $r = Invoke-MonitoredProcess -FileName $wg `
+                                   -Arguments "upgrade --id `"$($pkg.Id)`" --exact --disable-interactivity --accept-source-agreements --accept-package-agreements" `
+                                   -TimeoutSec 1800
+                            $rOut = $r.Lines -join " "
+                            if ($r.ExitCode -eq 0 -and ($rOut -match 'Successfully installed|Erfolgreich installiert|Installation reussie')) {
+                                L "    [OK] $($pkg.Name) im Retry aktualisiert"
+                                $retryInstalled += $pkg
+                            } else {
+                                L "    [WARNUNG] $($pkg.Name) auch im Retry fehlgeschlagen (Exit $($r.ExitCode))"
+                                $retryStillFailed += $pkg
+                            }
+                        }
+                    }
+
+                    # Endstatus berechnen
+                    $totalInstalled = $parsed.Installed.Count + $retryInstalled.Count
+                    # Failures = alle Fails OHNE die, die im Retry doch noch durchkamen
+                    $finalFails = @($parsed.Failed | Where-Object {
+                        $id = $_.Id
+                        -not ($retryInstalled | Where-Object { $_.Id -eq $id })
+                    })
+
                     L ""
                     if ($wgTimedOut) {
                         L "  [WARNUNG] App-Updates nach 60 Min ohne Reaktion abgebrochen"
-                        L "  Wahrscheinlich ein sehr grosser Download oder haengender Installer"
-                        Mark "Winget" "warn" "Nach 60 Min abgebrochen - eine App (vermutlich ein sehr grosser Download) hat zu lange gebraucht. Die uebrigen Apps wurden aktualisiert; bitte JustUpdate spaeter erneut ausfuehren."
-                    } elseif ($exitCode -eq 0) {
-                        if ($nothingToDo -and -not $installedAny) {
-                            L "  [OK] Keine App-Updates verfuegbar - alle Apps aktuell"
-                            Mark "Winget" "ok" "keine Updates verfuegbar"
-                        } elseif ($installedAny) {
-                            L "  [OK] Apps erfolgreich aktualisiert"
-                            Mark "Winget" "ok" "Apps aktualisiert"
+                        Mark "Winget" "warn" "Nach 60 Min abgebrochen - eine App hat zu lange gebraucht. Die uebrigen Apps wurden aktualisiert; bitte JustUpdate spaeter erneut ausfuehren."
+                    } elseif ($nothingToDo -and -not $installedAny -and $finalFails.Count -eq 0) {
+                        L "  [OK] Keine App-Updates verfuegbar - alle Apps aktuell"
+                        Mark "Winget" "ok" "keine Updates verfuegbar"
+                    } elseif ($finalFails.Count -eq 0 -and ($exitCode -eq 0 -or $exitCode -eq -1978335189 -or $totalInstalled -gt 0)) {
+                        if ($totalInstalled -gt 0) {
+                            L "  [OK] $totalInstalled App(s) erfolgreich aktualisiert"
+                            Mark "Winget" "ok" "$totalInstalled App(s) aktualisiert"
                         } else {
                             L "  [OK] Winget-Lauf abgeschlossen"
                             Mark "Winget" "ok" "Lauf abgeschlossen"
                         }
-                    } elseif ($exitCode -eq -1978335189) {
-                        L "  [OK] Keine Updates verfuegbar - alle Apps aktuell"
-                        Mark "Winget" "ok" "alle Apps aktuell"
                     } else {
-                        L "  [WARNUNG] Winget abgeschlossen mit Exit-Code: $exitCode"
-                        L "  Einige Apps konnten moeglicherweise nicht aktualisiert werden"
-                        Mark "Winget" "warn" "Exit-Code $exitCode - nicht alle Apps aktualisiert"
+                        $failNames = ($finalFails | ForEach-Object { $_.Name }) -join ", "
+                        if ($totalInstalled -gt 0) {
+                            L "  [WARNUNG] Teilweise aktualisiert: $totalInstalled OK, $($finalFails.Count) fehlgeschlagen"
+                            L "  Fehlgeschlagen: $failNames"
+                            Mark "Winget" "warn" "Teilweise aktualisiert ($totalInstalled OK) - noch offen: $failNames"
+                        } else {
+                            L "  [WARNUNG] Keine App aktualisiert - $($finalFails.Count) fehlgeschlagen"
+                            L "  Fehlgeschlagen: $failNames"
+                            Mark "Winget" "warn" "Nicht aktualisiert: $failNames (Exit-Code $exitCode)"
+                        }
                     }
                 } else {
                     L "  [WARNUNG] Winget ist nicht installiert"
@@ -2397,6 +2521,7 @@ function End-Session {
             $jsonPath = [IO.Path]::ChangeExtension($script:LogPath, $null).TrimEnd('.') -replace 'Maintenance_', 'result_'
             $jsonPath = "$jsonPath.json"
             $report | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonPath -Encoding utf8
+            $script:LastResultJson = $jsonPath
             # Rotation: max. 20 Result-JSONs behalten (analog Log-Rotation)
             Get-ChildItem -Path (Split-Path $jsonPath) -Filter "result_*.json" -File -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTime -Descending | Select-Object -Skip 20 |
@@ -2426,22 +2551,87 @@ function End-Session {
                 $msg += "`n`n--- Was genau ---`n`n$details"
             }
             $msg += "`n`nVollstaendige Details: Button 'LOG OEFFNEN'."
-            $msg += "`n`nBericht jetzt an den Support senden? (oeffnet E-Mail +"
-            $msg += "`nden Log-Ordner zum Anhaengen)"
+            $msg += "`n`nBericht jetzt an den Support senden?"
+            $msg += "`n(Mail mit Log wird vorbereitet - du musst nur noch 'Senden' klicken.)"
             $ans = [System.Windows.MessageBox]::Show($msg, $header,
                 [System.Windows.MessageBoxButton]::YesNo, $icon)
             if ($ans -eq [System.Windows.MessageBoxResult]::Yes) {
+                # Mail-Header / Body bauen — fuer BEIDE Wege (Outlook + mailto) identisch.
+                $subj = "JustUpdate Bericht - $($env:COMPUTERNAME) - $ok OK / $warn Warn / $err Fehler"
+                $head = "Automatischer JustUpdate-Bericht`r`n`r`n" +
+                        "Host: $($env:COMPUTERNAME)`r`nBenutzer: $($env:USERNAME)`r`n" +
+                        "Version: v$($script:JUVersion)`r`n" +
+                        "Ergebnis: $ok OK, $warn Warnungen, $err Fehler`r`n" +
+                        "Log-Datei: $($script:LogPath)`r`n"
+                # Modul-Details (kompakte Liste der warn/err) aus dem SyncHash
+                $modTxt = ""
+                if ($script:SyncHash -and $script:SyncHash.Results) {
+                    $bad = @()
+                    foreach ($k in @($script:SyncHash.Results.Keys)) {
+                        $r = $script:SyncHash.Results[$k]
+                        if ($r.Status -eq "warn" -or $r.Status -eq "err") {
+                            $bad += "  [$($r.Status.ToUpper())] $k - $($r.Details)"
+                        }
+                    }
+                    if ($bad.Count -gt 0) {
+                        $modTxt = "`r`n--- Module mit Problemen ---`r`n" + ($bad -join "`r`n") + "`r`n"
+                    }
+                }
+                # Log-Tail: letzte ~50 Zeilen, fuer Support-Diagnose ohne Attachment.
+                $tailTxt = ""
                 try {
-                    $subj = "JustUpdate Bericht - $($env:COMPUTERNAME) - $ok OK / $warn Warn / $err Fehler"
-                    $bodyTxt = "Automatischer JustUpdate-Bericht`r`n`r`n" +
-                               "Host: $($env:COMPUTERNAME)`r`nBenutzer: $($env:USERNAME)`r`n" +
-                               "Version: v$($script:JUVersion)`r`n" +
-                               "Ergebnis: $ok OK, $warn Warnungen, $err Fehler`r`n`r`n" +
-                               "Bitte die Log-Datei aus dem geoeffneten Ordner anhaengen."
-                    $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyTxt))"
-                    Start-Process $u
-                    Start-Process explorer.exe "/select,`"$($script:LogPath)`""
+                    if (Test-Path $script:LogPath) {
+                        $tailLines = Get-Content $script:LogPath -Tail 50 -ErrorAction Stop
+                        $tailTxt = "`r`n--- Log (letzte $($tailLines.Count) Zeilen) ---`r`n" +
+                                   ($tailLines -join "`r`n") + "`r`n"
+                    }
                 } catch {}
+
+                $bodyTxt = $head + $modTxt + $tailTxt
+
+                # Weg 1: Outlook-COM mit Attachments. Wenn Outlook installiert ist,
+                # bekommt der Kunde eine fertige Mail mit Log + JSON dran — nur noch
+                # 'Senden' klicken. Keine Datei mehr per Hand anhaengen.
+                $outlookOk = $false
+                try {
+                    $ol = New-Object -ComObject Outlook.Application -ErrorAction Stop
+                    $mail = $ol.CreateItem(0)    # olMailItem
+                    $mail.To       = "info@itintechsolutions.ch"
+                    $mail.Subject  = $subj
+                    $mail.Body     = $bodyTxt
+                    if (Test-Path $script:LogPath) {
+                        try { [void]$mail.Attachments.Add($script:LogPath) } catch {}
+                    }
+                    if ($script:LastResultJson -and (Test-Path $script:LastResultJson)) {
+                        try { [void]$mail.Attachments.Add($script:LastResultJson) } catch {}
+                    }
+                    $mail.Display($false)        # nicht modal, User klickt Senden
+                    $outlookOk = $true
+                } catch {
+                    $outlookOk = $false
+                }
+
+                # Weg 2: Fallback ohne Outlook. mailto mit Log-Tail direkt im Body —
+                # der Standard-Mail-Client (Thunderbird, Webmail-Handler etc.) bekommt
+                # alles Diagnose-relevante schon im Text. Datei landet zusaetzlich
+                # via Explorer im Blick, falls jemand die volle Datei dran will.
+                if (-not $outlookOk) {
+                    try {
+                        # mailto-URLs werden von vielen Handlern bei >2000 Bytes
+                        # abgeschnitten. Body daher ggf. trimmen — voller Log liegt
+                        # ja zusaetzlich als Datei im geoeffneten Ordner.
+                        $bodyForUri = $bodyTxt
+                        if ($bodyForUri.Length -gt 1800) {
+                            $bodyForUri = $bodyForUri.Substring(0, 1800) +
+                                          "`r`n`r`n[gekuerzt - vollstaendiger Log ist als Datei im geoeffneten Ordner]"
+                        }
+                        $u = "mailto:info@itintechsolutions.ch?subject=$([uri]::EscapeDataString($subj))&body=$([uri]::EscapeDataString($bodyForUri))"
+                        Start-Process $u
+                        # Ordner oeffnen statt /select — der Kunde sieht Log + result_*.json
+                        # nebeneinander und kann beides anhaengen, falls noetig.
+                        Start-Process explorer.exe ("`"" + (Split-Path $script:LogPath) + "`"")
+                    } catch {}
+                }
             }
         } else {
             [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
