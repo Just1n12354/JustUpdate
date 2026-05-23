@@ -1,6 +1,28 @@
 # JustUpdate — Changelog
 
-## v2.6.10
+## v2.6.10 (23.05.2026 22:42)
+
+**Neu: Release-Datum im Patch-Notes-Fenster.**
+- Jedes Versions-Header im Patchlog zeigt jetzt rechts neben der
+  Version das **Release-Datum + Uhrzeit** als kleine Pille
+  (z.B. `v2.6.10  23.05.2026 22:42`). So sieht man auf einen Blick
+  WANN welche Version rausgegangen ist.
+- Sidebar links bleibt kompakt mit Version ohne Datum.
+
+**Bugfix: OBS-Update scheitert weiterhin trotz Wildcard.**
+- Im User-Log: `obs*` Wildcard matched keinen Prozess, OBS-Update
+  scheitert mit Exit 6 ("Datei in Verwendung") - vermutlich weil
+  OBS einen Helper-Prozess mit untypischem Namen laufen hat
+  (Auto-Updater, Streamlabs/StreamElements-Plugin, Stream Deck
+  Companion, ...) oder einen Windows-Service.
+- Zweiter Pass beim Retry: pro fehlgeschlagenes Paket werden jetzt
+  alle Prozesse beendet, deren **EXE-Pfad** das Paket-Schluessel-
+  wort enthaelt (z.B. "OBS" -> alle Prozesse aus dem OBS-Installa-
+  tionsordner) PLUS alle Windows-Services mit passendem Namen.
+  Das fasst auch Helper, die nicht in der Wildcard-Liste stehen.
+- Diagnose-Log: was zusaetzlich beendet wurde, wird namentlich
+  + Pfad ausgegeben - so erkennt der Support beim naechsten Fall
+  sofort, was den Lock verursacht hatte.
 
 **Bugfix: Mail nicht mehr zwingend Outlook 2016.**
 - Bisher: JustUpdate startete bei "Mail an Support" per COM-Automation
@@ -44,7 +66,7 @@
   GUI-Log zeigt jetzt `Version: v...`, `Host: ...`, `Zeit: ...`,
   `Module: N ausgewaehlt`.
 
-## v2.6.9
+## v2.6.9 (23.05.2026 22:34)
 
 **Neu: Patch-Notes-Fenster komplett uebersichtlich neu gebaut.**
 - Vorher war alles Plain-Text in einer Box - Versionen liefen
@@ -64,7 +86,7 @@
     damit der Kunde sofort sieht, wo er steht.
   - Verschiebbar durch Klick auf die Header-Leiste, Esc schliesst.
 
-## v2.6.8
+## v2.6.8 (23.05.2026 22:29)
 
 **Vollstaendige Versions-Historie im Patchlog.**
 - Der Patchlog-Button (eingefuehrt in v2.6.7) zeigte bisher nur die
@@ -78,7 +100,7 @@
   - **v2.5.1 - v2.6.8:** Aktuelle Phase mit Release-Pipeline, Self-
     Update, Fleet-Reporting, Tray-Apps-Handling, Mail-Flow.
 
-## v2.6.7
+## v2.6.7 (23.05.2026 22:23)
 
 **Neu: Patch-Notes-Button in der Titelleiste.**
 - Oben links neben dem "i"-Button gibt es jetzt einen "?"-Button.
@@ -90,7 +112,7 @@
   (`github.com/Just1n12354/JustUpdate`). Funktioniert also auch bei
   einer reinen EXE-Installation, solange Internet da ist.
 
-## v2.6.6
+## v2.6.6 (23.05.2026 22:18)
 
 **UX: "Mail senden" / "Schliessen" statt "Ja" / "Nein".**
 - Der Abschluss-Dialog hatte vorher Ja/Nein-Buttons. Kunden klickten
@@ -125,7 +147,7 @@
   landet automatisch in der **Zwischenablage** - der Kunde drueckt
   einmal Strg+V im Mail-Body.
 
-## v2.6.5
+## v2.6.5 (23.05.2026 22:02)
 
 **Bugfix: Winget scheitert nicht mehr an Tray-Apps (OBS, Epic, Steam, …).**
 - Bisher schloss der Vor-Update-Schritt nur Apps mit sichtbarem Fenster.
@@ -157,7 +179,7 @@
   geoeffnet (statt nur die Logdatei selektiert), damit auch
   `result_*.json` mitgenommen werden kann.
 
-## v2.6.4
+## v2.6.4 (23.05.2026 21:36)
 
 **Bugfix: Self-Update überlebt jetzt Antivirus-Quarantäne.**
 - Wenn ein Antivirus (z.B. HP Wolf Security) die heruntergeladene
@@ -175,7 +197,7 @@
   ein konkreter Klartext-Hinweis im Log ausgegeben:
   „Antivirus vorübergehend pausieren und JustUpdate erneut starten".
 
-## v2.6.3
+## v2.6.3 (23.05.2026 21:18)
 
 **Neu: Optionale Updates werden jetzt mitgemacht.**
 - Module **Windows Updates** und **Treiber** binden Microsoft Update als Quelle
@@ -196,7 +218,7 @@
   Erst-Suche. Sonst hätte der Default-Sucher einen via MU installierten
   optionalen Treiber nicht gekannt und fälschlich als „weg" gemeldet.
 
-## v2.6.2
+## v2.6.2 (19.05.2026)
 
 **Neu: „Was ist neu" beim Update.**
 - Beim Self-Update sieht der Kunde jetzt **was geändert wurde — kumulativ ab
@@ -211,7 +233,7 @@
   unsauberen Versions-Header).
 - Voller Code-Durchgang: Self-Update-, Migrations- und Modulpfade geprüft.
 
-## v2.6.1
+## v2.6.1 (19.05.2026 21:37)
 
 **Stabilisierung (weniger Fehlalarme auf Fremd-/Kundengeräten):**
 - **Restore-Modul gehärtet:** Windows-24h-Sperre (1 Punkt/Tag) wird für den
@@ -236,7 +258,7 @@
 bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
 *(Hinweis: Codepage war bereits dynamisch — kein Handlungsbedarf.)*
 
-## v2.6.0
+## v2.6.0 (19.05.2026 20:59)
 
 **Release-Pipeline (Itin-TechSolutions-Ops):**
 - `VERSION` als Single Source of Truth — Version steht nur noch an EINER Stelle.
@@ -261,11 +283,11 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   Zeit, Dauer, pro-Modul-Status, Summe). Ermöglicht Fleet-Monitoring über mehrere
   Kundengeräte hinweg.
 
-## v2.5.1
+## v2.5.1 (19.05.2026 00:26)
 
 - Watchdog-Timeout für SFC/DISM/Winget; Klartext-Gründe im Abschluss-Popup.
 
-## v2.4.8
+## v2.4.8 (12.05.2026 19:35)
 
 **Neu: Heartbeat-Runspace fuer blockierende WUA-Calls.**
 - Windows Update Agent (WUA) kann minutenlang ohne Ausgabe blockieren -
@@ -274,7 +296,7 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   einen "noch dran, Sekunde X" ins Live-Log. So weiss der Kunde, dass
   weitergearbeitet wird, und unterbricht nicht vorzeitig.
 
-## v2.4.7
+## v2.4.7 (12.05.2026 19:24)
 
 **Neu: Pre-Download-Hinweis + Size-Sanity-Check in Modul 3/4/Store.**
 - Bevor ein grosser Download startet, kommt ein Klartext-Hinweis im Log
@@ -284,7 +306,7 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   erwarteten Wert? Wenn nein -> Abbruch mit verstaendlicher Fehlermeldung
   statt stillem Wegfall.
 
-## v2.4.6
+## v2.4.6 (12.05.2026 19:16)
 
 **Bugfix: ProgressPreference fuer Self-Update-Download.**
 - `Invoke-WebRequest` rendert in Windows PowerShell standardmaessig eine
@@ -293,21 +315,21 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   ~10x langsamer. Jetzt wird `$ProgressPreference = 'SilentlyContinue'`
   fuer den Self-Update-Download gesetzt und danach wiederhergestellt.
 
-## v2.4.5
+## v2.4.5 (10.05.2026 22:17)
 
 **Bugfix: Winget-Modul Output-Wording.**
 - Winget meldet bei "nichts zu tun" in deutscher Sprache "Es wurde kein
   installiertes Paket gefunden" - das klang wie ein Fehler. Re-Wording
   zu klarem "Alle Apps sind aktuell - keine Updates verfuegbar".
 
-## v2.4.4
+## v2.4.4 (10.05.2026 21:53)
 
 **Tooling: Installer ins Repo.**
 - Kompilierter Inno-Setup-Installer wird jetzt unter `Releases/v<X>/`
   ins Repo gelegt. Damit ist die genaue Build-Version archiviert und
   jederzeit reproduzierbar / nachinstallierbar.
 
-## v2.4.3
+## v2.4.3 (10.05.2026 14:48)
 
 **Grosse UI- und UX-Ueberarbeitung:**
 - **UI rot:** durchgaengiges Itin-TechSolutions-Farbschema (Akzentfarbe
@@ -331,22 +353,22 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   Status-Updates verloren - jetzt ueber eine synchronisierte Queue,
   jeder Status wird angezeigt.
 
-## v2.3.7
+## v2.3.7 (10.05.2026 13:57)
 
 - **Update-Dialog Test:** Version-Bump um den Self-Update-Dialog
   produktiv zu pruefen (echter Versions-Sprung statt Mock).
 
-## v2.3.6
+## v2.3.6 (10.05.2026 13:55)
 
 - **Versionsnummer im Footer angezeigt.** Hilft im Support: Kunde kann
   beim Anruf direkt die laufende Version vorlesen statt sie in den
   Dateieigenschaften zu suchen.
 
-## v2.3.5
+## v2.3.5 (10.05.2026 13:46)
 
 - **Bump auf 2.3.5** fuer den ersten echten Test des Update-Dialogs.
 
-## v2.3.4
+## v2.3.4 (10.05.2026 13:42)
 
 - **Initial Release** von `MaintenanceProGUI_MODERN.ps1` (2026-05-10).
   WPF-basierte Wartungs-GUI, 9 Module: Wiederherstellungspunkt,
@@ -354,7 +376,7 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
   Microsoft Store, System-Reparatur (SFC/DISM), Netzwerk-Reparatur,
   Bereinigung. Erste produktive Version fuer den Kundenrollout.
 
-## v2.0 - v2.3.3 (Pre-History, 2026-05-03 - 2026-05-10)
+## v2.0 - v2.3.3 (03.05.2026 - 10.05.2026)
 
 **EXE-Phase (verworfen).**
 - Vor v2.3.4 existierte JustUpdate als kompilierte **`JustUpdate.exe`**
