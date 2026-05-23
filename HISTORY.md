@@ -1,3 +1,24 @@
+## v2.6.3
+
+**Neu: Optionale Updates werden jetzt mitgemacht.**
+- Module **Windows Updates** und **Treiber** binden Microsoft Update als Quelle
+  ein (`ServerSelection=ssOthers`, ServiceID
+  `7971f918-a847-4430-9279-4a52d1efe18d`). Damit kommen jetzt auch die Updates
+  durch, die bisher nur unter **Einstellungen → Windows Update → Erweiterte
+  Optionen → Optionale Updates** sichtbar waren — optionale Treiber,
+  Preview-/Nicht-Sicherheits-KBs und Office/MS-Produkte.
+- Idempotente Registrierung via `Microsoft.Update.ServiceManager.AddService2`
+  mit Flag 2 (AllowOnlineRegistration) — **bewusst ohne** Flag 4
+  (RegisterServiceWithAU), damit der Auto-Updater des Geräts nicht dauerhaft
+  auf MU umgehängt wird. Nur der JustUpdate-Lauf nutzt MU.
+- Fallback: schlägt die MU-Registrierung fehl (Policy, Offline, GPO), läuft das
+  Modul mit der Default-Quelle weiter — Klartext-Warnung im Log statt Abbruch.
+
+**Bugfix (sonst false positives):**
+- Re-Search im Treiber-Verifikations-Block nutzt jetzt dieselbe Quelle wie die
+  Erst-Suche. Sonst hätte der Default-Sucher einen via MU installierten
+  optionalen Treiber nicht gekannt und fälschlich als „weg" gemeldet.
+
 ## v2.6.2
 
 **Neu: „Was ist neu" beim Update.**

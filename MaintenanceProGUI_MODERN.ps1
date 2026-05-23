@@ -1,4 +1,4 @@
-# Version: 2.6.2
+# Version: 2.6.3
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.2' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.3' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -1111,27 +1111,6 @@ function Start-Maintenance {
             if ($hb.Rs) { try { $hb.Rs.Close() } catch {} }
         }
 
-        # Microsoft Update Service registrieren + ServiceID zurueckgeben (oder $null).
-        # Warum: Die "Optionalen Updates" aus Windows-Einstellungen > Windows Update >
-        # Erweiterte Optionen > Optionale Updates (v.a. Treiber, manchmal Vorschau-CU)
-        # liegen im Microsoft Update Service - der Standard WUA-Searcher (ssDefault)
-        # sucht nur im Windows Update Service und uebersieht sie deshalb komplett.
-        # Loesung: Service via IUpdateServiceManager anhaengen, Searcher dann mit
-        # ServerSelection=ssOthers + dieser ServiceID darauf zeigen lassen.
-        # AddService2 ist idempotent - bei bereits registriertem Service wirft es,
-        # das fangen wir und akzeptieren es.
-        function Enable-MicrosoftUpdateService {
-            $muId = '7971f918-a847-4430-9279-4a52d1efe18d'
-            try {
-                $svcMgr = New-Object -ComObject Microsoft.Update.ServiceManager
-                try { $svcMgr.AddService2($muId, 7, '') | Out-Null } catch {}
-                foreach ($svc in $svcMgr.Services) {
-                    if ($svc.ServiceID -eq $muId) { return $muId }
-                }
-            } catch {}
-            return $null
-        }
-
         # Startet ein externes Tool (sfc/dism/winget), streamt dessen Ausgabe live ins
         # Log UND ueberwacht die Laufzeit. Reagiert das Tool laenger als $TimeoutSec
         # nicht (klassischer DISM-/Download-Hang), wird der Prozessbaum hart beendet
@@ -1399,17 +1378,34 @@ function Start-Maintenance {
                 L "  Windows Update Service initialisieren..."
                 $session = New-Object -ComObject Microsoft.Update.Session
                 $searcher = $session.CreateUpdateSearcher()
-                # Microsoft Update Service anhaengen + Searcher darauf umstellen, sonst
-                # fehlen die "Optionalen Updates" aus den Win-Einstellungen.
-                $muId = Enable-MicrosoftUpdateService
-                if ($muId) {
+
+                # v2.6.3: Microsoft Update Service einbinden, damit auch die "Optionalen
+                # Updates" aus Settings -> Erweiterte Optionen erfasst werden. Default-
+                # ServerSelection liefert je nach Geraete-Policy (WSUS/Intune/MU-Toggle aus)
+                # nur einen Teil und laesst optionale Preview-/Office-/Server-Updates weg.
+                # ServiceID 7971f918-... entspricht dem Settings-Toggle "Updates fuer andere
+                # Microsoft-Produkte erhalten". Flag 2 (AllowOnlineRegistration), bewusst
+                # OHNE Flag 4 (RegisterServiceWithAU) - der Auto-Updater des Geraets soll
+                # nicht dauerhaft umgehaengt werden.
+                $muServiceId = "7971f918-a847-4430-9279-4a52d1efe18d"
+                try {
+                    $svcMgr = New-Object -ComObject Microsoft.Update.ServiceManager
+                    $muRegistered = $false
+                    foreach ($svc in $svcMgr.Services) {
+                        if ($svc.ServiceID -eq $muServiceId) { $muRegistered = $true; break }
+                    }
+                    if (-not $muRegistered) {
+                        $svcMgr.AddService2($muServiceId, 2, "") | Out-Null
+                        L "  Microsoft Update Service registriert (fuer optionale Updates)"
+                    }
                     $searcher.ServerSelection = 3   # ssOthers
-                    $searcher.ServiceID = $muId
-                    L "  Microsoft Update Service aktiv - optionale Updates werden einbezogen"
-                } else {
-                    L "  [HINWEIS] Microsoft Update Service nicht verfuegbar - nur Standard Windows Update"
+                    $searcher.ServiceID       = $muServiceId
+                    L "  Suche via Microsoft Update (inkl. optionale Updates)..."
+                } catch {
+                    L "  [WARNUNG] Microsoft Update nicht verfuegbar - Fallback auf Default-Server"
+                    L "           Optionale Updates koennen ausgelassen werden. Grund: $($_.Exception.Message)"
                 }
-                L "  Suche nach verfuegbaren Updates (inkl. Vorschau/optional)..."
+
                 # FIX v2.3.3: Type='Software'-Filter weggelassen, damit Vorschau-/Preview-Updates
                 # (z.B. KB5083631) ebenfalls gefunden werden. Treiber filtern wir gleich raus,
                 # weil die in Modul 4 separat behandelt werden.
@@ -1521,17 +1517,32 @@ function Start-Maintenance {
                 L "  Windows Update Service fuer Treiber initialisieren..."
                 $session = New-Object -ComObject Microsoft.Update.Session
                 $searcher = $session.CreateUpdateSearcher()
-                # Treiber-Updates "Optionale Updates" liegen im Microsoft Update Service
-                # (BrowseOnly=true). Ohne diesen Service-Switch findet WUA hier oft nur
-                # einen Bruchteil der tatsaechlich verfuegbaren Treiber.
-                $muId = Enable-MicrosoftUpdateService
-                if ($muId) {
+
+                # v2.6.3: Microsoft Update Service auch fuer Treiber nutzen - damit die
+                # "Optionalen Treiber-Updates" aus Settings -> Erweiterte Optionen ->
+                # Treiber-Updates erfasst werden. Default-Sucher haengt sonst an der
+                # WU-Default-Policy (ExcludeWUDriversInQualityUpdate / MU-Toggle aus)
+                # vorbei und liefert nur "wichtige" Treiber. Selbe ServiceID/Flags wie
+                # in Modul 3, idempotent (AddService2 wird uebersprungen falls schon da).
+                $muServiceId = "7971f918-a847-4430-9279-4a52d1efe18d"
+                try {
+                    $svcMgr = New-Object -ComObject Microsoft.Update.ServiceManager
+                    $muRegistered = $false
+                    foreach ($svc in $svcMgr.Services) {
+                        if ($svc.ServiceID -eq $muServiceId) { $muRegistered = $true; break }
+                    }
+                    if (-not $muRegistered) {
+                        $svcMgr.AddService2($muServiceId, 2, "") | Out-Null
+                        L "  Microsoft Update Service registriert (fuer optionale Treiber)"
+                    }
                     $searcher.ServerSelection = 3   # ssOthers
-                    $searcher.ServiceID = $muId
-                    L "  Microsoft Update Service aktiv - optionale Treiber werden einbezogen"
-                } else {
-                    L "  [HINWEIS] Microsoft Update Service nicht verfuegbar - nur Standard Windows Update"
+                    $searcher.ServiceID       = $muServiceId
+                    L "  Suche via Microsoft Update (inkl. optionale Treiber)..."
+                } catch {
+                    L "  [WARNUNG] Microsoft Update nicht verfuegbar - Fallback auf Default-Server"
+                    L "           Optionale Treiber koennen ausgelassen werden. Grund: $($_.Exception.Message)"
                 }
+
                 L "  Suche nach verfuegbaren Treiber-Updates..."
                 $drvResult = $searcher.Search("IsInstalled=0 AND Type='Driver'")
 
@@ -1592,9 +1603,12 @@ function Start-Maintenance {
                         L "  Verifiziere Installation (Re-Scan)..."
                         try {
                             $verSearcher = $session.CreateUpdateSearcher()
-                            if ($muId) {
+                            # v2.6.3: Re-Search MUSS dieselbe Quelle nutzen wie die
+                            # urspruengliche Suche, sonst false positives (MU-Treiber
+                            # waere im Default-Sucher unbekannt -> faelschlich "installiert").
+                            if ($searcher.ServerSelection -eq 3 -and $searcher.ServiceID) {
                                 $verSearcher.ServerSelection = 3
-                                $verSearcher.ServiceID = $muId
+                                $verSearcher.ServiceID       = $searcher.ServiceID
                             }
                             $verResult = $verSearcher.Search("IsInstalled=0 AND Type='Driver'")
                             $stillPending = @()
