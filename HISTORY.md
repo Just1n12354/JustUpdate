@@ -1,3 +1,13 @@
+## v2.6.11 (23.05.2026 23:00)
+
+**Versions-Bump damit der Hotfix bei Kunden ankommt.**
+- Die Patches aus v2.6.10 (Datums-Pille im Patchlog, aggressiver
+  OBS-Kill mit Pfad-Match + Services + Diagnose) waren zwar im
+  Verteil-Repo, aber Self-Update prueft den `# Version:`-Header.
+  Da der bei v2.6.10 blieb, hat Self-Update den Patch nicht
+  gezogen - Kunden bleiben sonst auf dem alten Stand kleben.
+- Mit v2.6.11 zieht Self-Update jetzt sauber durch.
+
 ## v2.6.10
 
 **Bugfix: Mail nicht mehr zwingend Outlook 2016.**
