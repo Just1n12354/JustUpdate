@@ -1,3 +1,17 @@
+## v2.6.8
+
+**Vollstaendige Versions-Historie im Patchlog.**
+- Der Patchlog-Button (eingefuehrt in v2.6.7) zeigte bisher nur die
+  Versionen ab v2.5.1. Jetzt **alle Versionen** von der ersten EXE-
+  Phase (2026-05-03, vor v2.3.4) bis heute. Kunden sehen direkt im
+  Patchlog-Fenster die komplette Entstehungsgeschichte:
+  - **Pre-History (v2.0 - v2.3.3):** EXE-basierte Variante mit
+    C#-Launcher, verworfen wegen Smart-App-Control-Block.
+  - **v2.3.4 - v2.4.8:** PowerShell-MODERN-Phase (UI rot, Watchdog,
+    Pre-Download-Hinweise, Heartbeat, ...).
+  - **v2.5.1 - v2.6.8:** Aktuelle Phase mit Release-Pipeline, Self-
+    Update, Fleet-Reporting, Tray-Apps-Handling, Mail-Flow.
+
 ## v2.6.7
 
 **Neu: Patch-Notes-Button in der Titelleiste.**

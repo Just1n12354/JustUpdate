@@ -1,5 +1,19 @@
 # JustUpdate — Changelog
 
+## v2.6.8
+
+**Vollstaendige Versions-Historie im Patchlog.**
+- Der Patchlog-Button (eingefuehrt in v2.6.7) zeigte bisher nur die
+  Versionen ab v2.5.1. Jetzt **alle Versionen** von der ersten EXE-
+  Phase (2026-05-03, vor v2.3.4) bis heute. Kunden sehen direkt im
+  Patchlog-Fenster die komplette Entstehungsgeschichte:
+  - **Pre-History (v2.0 - v2.3.3):** EXE-basierte Variante mit
+    C#-Launcher, verworfen wegen Smart-App-Control-Block.
+  - **v2.3.4 - v2.4.8:** PowerShell-MODERN-Phase (UI rot, Watchdog,
+    Pre-Download-Hinweise, Heartbeat, ...).
+  - **v2.5.1 - v2.6.8:** Aktuelle Phase mit Release-Pipeline, Self-
+    Update, Fleet-Reporting, Tray-Apps-Handling, Mail-Flow.
+
 ## v2.6.7
 
 **Neu: Patch-Notes-Button in der Titelleiste.**
@@ -186,3 +200,124 @@ bricht bei gesperrter/veralteter EXE klar ab statt falsches „OK".
 ## v2.5.1
 
 - Watchdog-Timeout für SFC/DISM/Winget; Klartext-Gründe im Abschluss-Popup.
+
+## v2.4.8
+
+**Neu: Heartbeat-Runspace fuer blockierende WUA-Calls.**
+- Windows Update Agent (WUA) kann minutenlang ohne Ausgabe blockieren -
+  vorher sah es nach "haengen geblieben" aus, der User brach ab. Jetzt
+  laeuft ein Heartbeat-Runspace nebenher und schreibt im 30-Sek-Takt
+  einen "noch dran, Sekunde X" ins Live-Log. So weiss der Kunde, dass
+  weitergearbeitet wird, und unterbricht nicht vorzeitig.
+
+## v2.4.7
+
+**Neu: Pre-Download-Hinweis + Size-Sanity-Check in Modul 3/4/Store.**
+- Bevor ein grosser Download startet, kommt ein Klartext-Hinweis im Log
+  ("ca. 850 MB - das kann dauern"), damit der User nicht denkt der PC
+  haengt.
+- Sanity-Check auf die heruntergeladenen Bytes: passt die Groesse zum
+  erwarteten Wert? Wenn nein -> Abbruch mit verstaendlicher Fehlermeldung
+  statt stillem Wegfall.
+
+## v2.4.6
+
+**Bugfix: ProgressPreference fuer Self-Update-Download.**
+- `Invoke-WebRequest` rendert in Windows PowerShell standardmaessig eine
+  deutsche Fortschrittsanzeige ("Webanforderung wird geschrieben") -
+  die wurde ueber das WPF-Fenster gezeichnet und machte den Download
+  ~10x langsamer. Jetzt wird `$ProgressPreference = 'SilentlyContinue'`
+  fuer den Self-Update-Download gesetzt und danach wiederhergestellt.
+
+## v2.4.5
+
+**Bugfix: Winget-Modul Output-Wording.**
+- Winget meldet bei "nichts zu tun" in deutscher Sprache "Es wurde kein
+  installiertes Paket gefunden" - das klang wie ein Fehler. Re-Wording
+  zu klarem "Alle Apps sind aktuell - keine Updates verfuegbar".
+
+## v2.4.4
+
+**Tooling: Installer ins Repo.**
+- Kompilierter Inno-Setup-Installer wird jetzt unter `Releases/v<X>/`
+  ins Repo gelegt. Damit ist die genaue Build-Version archiviert und
+  jederzeit reproduzierbar / nachinstallierbar.
+
+## v2.4.3
+
+**Grosse UI- und UX-Ueberarbeitung:**
+- **UI rot:** durchgaengiges Itin-TechSolutions-Farbschema (Akzentfarbe
+  `#A3243B`), passt zur Marke statt generisches Windows-Blau.
+- **Status-Farben:** Module mit OK / Warnung / Fehler werden in der
+  Liste sofort farblich erkennbar statt nur als Text.
+- **Logs in App-Ordner:** Log-Dateien landen jetzt im Installations-
+  ordner statt in `%TEMP%`, wo Windows sie unangekuendigt loescht.
+- **Multi-User-Cleanup:** Bereinigungs-Modul leert temporaere Dateien
+  fuer alle Benutzerprofile auf dem PC, nicht nur den aktuell
+  angemeldeten User.
+- **Apps-schliessen-Dialog:** Vor Update-Modulen fragt JustUpdate, ob
+  laufende Apps geschlossen werden sollen - verhindert dass Update-
+  Installer sich an gesperrten Dateien aufhaengen.
+- **Info-Button (i):** Klartext-Erklaerung was diese App eigentlich
+  macht - reduziert Support-Anrufe von neuen Kunden.
+- **Store via WUA:** Microsoft-Store-Updates werden ueber den Windows
+  Update Agent angestossen statt ueber den unzuverlaessigen Store-
+  Trigger.
+- **Queue-Bugfix:** Bei sehr schnellem Modul-Wechsel gingen einzelne
+  Status-Updates verloren - jetzt ueber eine synchronisierte Queue,
+  jeder Status wird angezeigt.
+
+## v2.3.7
+
+- **Update-Dialog Test:** Version-Bump um den Self-Update-Dialog
+  produktiv zu pruefen (echter Versions-Sprung statt Mock).
+
+## v2.3.6
+
+- **Versionsnummer im Footer angezeigt.** Hilft im Support: Kunde kann
+  beim Anruf direkt die laufende Version vorlesen statt sie in den
+  Dateieigenschaften zu suchen.
+
+## v2.3.5
+
+- **Bump auf 2.3.5** fuer den ersten echten Test des Update-Dialogs.
+
+## v2.3.4
+
+- **Initial Release** von `MaintenanceProGUI_MODERN.ps1` (2026-05-10).
+  WPF-basierte Wartungs-GUI, 9 Module: Wiederherstellungspunkt,
+  Windows Defender, Windows Updates, Treiber, Apps (Winget),
+  Microsoft Store, System-Reparatur (SFC/DISM), Netzwerk-Reparatur,
+  Bereinigung. Erste produktive Version fuer den Kundenrollout.
+
+## v2.0 - v2.3.3 (Pre-History, 2026-05-03 - 2026-05-10)
+
+**EXE-Phase (verworfen).**
+- Vor v2.3.4 existierte JustUpdate als kompilierte **`JustUpdate.exe`**
+  mit eigenem **C#-Launcher** (`JustUpdateLauncher.cs`).
+- Verteilt wurde ein Inno-Setup-Installer (`JustUpdate_Setup.exe`),
+  der die EXE installierte. Mehrere Iterationen zwischen 2026-05-03
+  und 2026-05-10 wurden lokal entwickelt, aber nicht systematisch
+  versioniert.
+
+**Warum verworfen:**
+- **Windows Smart App Control / WDAC** blockierte die unsignierte
+  EXE mit Fehler **4551** ("App wurde blockiert"). Eine Signatur
+  war zu diesem Zeitpunkt nicht beschaffbar.
+- Folge: Migration **weg von einer eigenen EXE**, hin zu einem
+  reinen PowerShell-Skript (`MaintenanceProGUI_MODERN.ps1`).
+  Shortcuts zeigen seither direkt auf `powershell.exe -File`,
+  der Launcher entfaellt komplett.
+- Bei v2.3.4 wurden die alten Artefakte (`JustUpdate.exe`,
+  `JustUpdateLauncher.cs`, alter `JustUpdate_Setup.exe`) endgueltig
+  aus dem Repo entfernt.
+
+**Was technisch schon da war (uebernommen in v2.3.4):**
+- Inno-Setup-Build-Pipeline (`JustUpdate_Setup.iss`).
+- App-Icon, App-Verzeichnis (`{autopf}\JustUpdate`),
+  Deinstallations-Registrierung.
+- Grundzueg des Multi-Modul-Konzepts.
+
+> Pre-v2.3.4 ist nicht ueber Self-Update erreichbar - wer noch
+> eine alte EXE-Installation hat, muss den aktuellen Installer
+> (`JustUpdate_Setup_v<X>.exe`) frisch installieren.
