@@ -1,3 +1,38 @@
+## v2.6.6
+
+**UX: "Mail senden" / "Schliessen" statt "Ja" / "Nein".**
+- Der Abschluss-Dialog hatte vorher Ja/Nein-Buttons. Kunden klickten
+  reflexhaft "Ja" und wunderten sich, warum eine Mail-Vorschau aufging.
+  Jetzt eigener Dialog im Programm-Stil mit explizit beschrifteten
+  Buttons: links rot "Mail an Support senden", rechts neutral
+  "Schliessen". "Schliessen" ist Default - Enter loest also KEINE
+  Mail mehr ungewollt aus.
+
+**Bugfix: "Keine Internet-Verbindung" obwohl online.**
+- Single-HEAD-Request auf microsoft.com mit 5 s Timeout schlug bei
+  DNS-Lag, IPv6-Problemen oder kurz nicht erreichbarem MS-Server
+  faelschlich fehl. Jetzt:
+  1. **Windows NetworkListManager (COM)** zuerst befragt - die selbe
+     API, die das Windows-Tray-Icon "Verbunden" nutzt.
+  2. Fallback: HTTP-HEAD gegen **microsoft.com / github.com /
+     cloudflare.com** mit je 8 s Timeout, Abbruch bei erstem Treffer.
+  Nur wenn ALLES fehlschlaegt -> Offline-Hinweis.
+
+**Bugfix: Vor-Update-Schritt listet jetzt welche Programme.**
+- Vorher: "12 laufende Programme geschlossen" - Kunden dachten OBS sei
+  dabei gewesen, obwohl OBS gar nicht lief. Jetzt mit konkreter Liste:
+  "12 Programme geschlossen -> Steam, Discord, OneDrive, Teams, ...".
+  Auch der Fall "0 Programme gefunden" wird klar gemeldet.
+
+**Bugfix: Mail enthielt nur die letzten 50 Log-Zeilen.**
+- Outlook-Variante: jetzt ist der **vollstaendige Log direkt im Mail-
+  Body** (Outlook hat keine Laengenbegrenzung) - plus weiterhin als
+  Anhang. Support sieht alles ohne Attachment-Klick.
+- mailto-Fallback (Thunderbird/Webmail): kann technisch nur ~1800
+  Zeichen URL-Body. Loesung: kompakter Body in der URL, voller Log
+  landet automatisch in der **Zwischenablage** - der Kunde drueckt
+  einmal Strg+V im Mail-Body.
+
 ## v2.6.5
 
 **Bugfix: Winget scheitert nicht mehr an Tray-Apps (OBS, Epic, Steam, …).**
