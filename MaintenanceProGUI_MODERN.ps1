@@ -1,4 +1,4 @@
-# Version: 2.6.12
+# Version: 2.6.13
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.12' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.13' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -1057,6 +1057,7 @@ function Start-Maintenance {
     $script:LastBarTarget = 0
     $e.xTime.Text = "00:00"
     $script:StartTime = Get-Date
+    $script:SessionEnded = $false   # Reentrancy-Guard fuer End-Session zuruecksetzen
 
     $e.xStart.IsEnabled = $false
     $e.xStop.IsEnabled  = $true
@@ -1232,16 +1233,38 @@ function Start-Maintenance {
             $wdPs = [powershell]::Create(); $wdPs.Runspace = $wdRs
             [void]$wdPs.AddScript({
                 $waited = 0
+                $userStop = $false
                 while ($waited -lt $wdTimeout) {
                     Start-Sleep -Seconds 1
                     $waited++
                     if (-not (Get-Process -Id $wdPid -ErrorAction SilentlyContinue)) { return }
-                    if ($sync.Stop -eq $true) { break }
+                    if ($sync.Stop -eq $true) { $userStop = $true; break }
                 }
-                $wd.Killed = $true
+                # Prozessbaum hart beenden — bei echtem Timeout ODER User-Stop (sonst
+                # laeuft der Installer verwaist weiter). ABER nur ein echter Timeout
+                # wird als Killed/TimedOut markiert. Ein User-Stop darf NICHT als
+                # "nach X Min abgebrochen" gemeldet werden, sonst zeigen Winget/SFC/
+                # DISM faelschlich eine Timeout-Warnung obwohl der User selbst stoppte.
+                if (-not $userStop) { $wd.Killed = $true }
                 try { Start-Process taskkill.exe -ArgumentList "/PID $wdPid /T /F" -WindowStyle Hidden -Wait -ErrorAction Stop } catch {}
             })
             $wdHandle = $wdPs.BeginInvoke()
+
+            # stderr PARALLEL in einem eigenen Runspace leeren, BEVOR wir synchron
+            # stdout lesen. Sonst Deadlock-Risiko: fuellt das Tool (DISM/winget) den
+            # stderr-Puffer (~4 KB) WAEHREND es weiter auf stdout schreibt, blockiert
+            # der Kindprozess am stderr-Write und wir am stdout-ReadLine - bis der
+            # Watchdog nach Timeout killt (und es faelschlich als Timeout zaehlt).
+            # Gleiches bewaehrtes Runspace-Muster wie der Watchdog (kein .NET-Event-
+            # Delegate add_ErrorDataReceived - das stuerzt PS5.1 in Runspaces ab).
+            $errBuf = [hashtable]::Synchronized(@{ Text = "" })
+            $erRs = [runspacefactory]::CreateRunspace()
+            $erRs.ApartmentState = 'STA'; $erRs.Open()
+            $erRs.SessionStateProxy.SetVariable('proc', $proc)
+            $erRs.SessionStateProxy.SetVariable('errBuf', $errBuf)
+            $erPs = [powershell]::Create(); $erPs.Runspace = $erRs
+            [void]$erPs.AddScript({ try { $errBuf.Text = $proc.StandardError.ReadToEnd() } catch {} })
+            $erHandle = $erPs.BeginInvoke()
 
             $allLines = New-Object System.Collections.Generic.List[string]
             try {
@@ -1253,8 +1276,11 @@ function Start-Maintenance {
                     }
                 }
             } catch {}
-            $errOut = ""
-            try { $errOut = $proc.StandardError.ReadToEnd() } catch {}
+            # stderr-Reader einsammeln (spaetestens mit Prozess-Ende fertig) + aufraeumen
+            try { [void]$erPs.EndInvoke($erHandle) } catch {}
+            $errOut = $errBuf.Text
+            try { $erPs.Dispose() } catch {}
+            try { $erRs.Close() } catch {}
             try { $proc.WaitForExit() } catch {}
             if ($errOut -and $errOut.Trim().Length -gt 0) {
                 $errOut.Split("`n") | ForEach-Object {
@@ -1747,10 +1773,37 @@ function Start-Maintenance {
                                             }
                                         } catch {}
                                     }
-                                    L "  [OK] pnputil-Fallback: $pnpInstalled Treiber-Pakete uebernommen"
-                                    # echte erfolgsmenge neu berechnen
-                                    $drvFail = [Math]::Max(0, $stillPending.Count - $pnpInstalled)
-                                    $drvOk = $dColl.Count - $drvFail
+                                    L "  [OK] pnputil-Fallback: $pnpInstalled Treiber-Paket(e) uebernommen"
+                                    # Ehrliche Verifikation statt blinder .inf-Zaehlung:
+                                    # der Cache enthaelt i.d.R. WEIT mehr .inf als haengende
+                                    # Treiber (mehrere .inf pro Paket + Altbestaende).
+                                    # $pnpInstalled gegen $stillPending zu rechnen drueckte
+                                    # $drvFail faelschlich auf 0 -> "alle Treiber installiert
+                                    # (verifiziert)" obwohl pnputil nur fremde .inf einspielte.
+                                    # Nach pnputil deshalb erneut suchen, welche der zuvor
+                                    # haengenden Treiber JETZT noch IsInstalled=0 sind.
+                                    $reallyPending = $stillPending
+                                    try {
+                                        $reSearcher = $session.CreateUpdateSearcher()
+                                        if ($searcher.ServerSelection -eq 3 -and $searcher.ServiceID) {
+                                            $reSearcher.ServerSelection = 3
+                                            $reSearcher.ServiceID       = $searcher.ServiceID
+                                        }
+                                        $reResult = $reSearcher.Search("IsInstalled=0 AND Type='Driver'")
+                                        $reallyPending = @($reResult.Updates | Where-Object { $stillPending -contains $_.Title } | ForEach-Object { $_.Title })
+                                    } catch {
+                                        L "  [WARNUNG] Re-Verifikation nach pnputil fehlgeschlagen - werte haengende Treiber als offen"
+                                    }
+                                    # Inkrementell gegen die WUA-Zaehler verrechnen (wie der
+                                    # No-Cache-Zweig) - NICHT mit $dColl.Count ueberschreiben,
+                                    # sonst gingen echte WUA-Fehlschlaege aus der Install-Schleife
+                                    # verloren.
+                                    $drvFail += @($reallyPending).Count
+                                    $drvOk    = [Math]::Max(0, $drvOk - @($reallyPending).Count)
+                                    if (@($reallyPending).Count -gt 0) {
+                                        L "  [WARNUNG] $(@($reallyPending).Count) Treiber haengen weiterhin (auch nach pnputil):"
+                                        foreach ($t in $reallyPending) { L "    - $t" }
+                                    }
                                 } else {
                                     L "  [WARNUNG] Kein Treiber-Cache fuer pnputil-Fallback vorhanden"
                                     $drvFail += $stillPending.Count
@@ -3242,6 +3295,13 @@ function Show-SupportPrompt {
 
 function End-Session {
     param([switch]$completed)
+    # Reentrancy-Guard: Stop-Klick (End-Session) und der Done-Tick des UI-Timers
+    # (End-Session -completed) koennen fast gleichzeitig feuern - ein bereits in der
+    # Dispatcher-Queue stehender Tick laeuft trotz $UITimer.Stop() noch durch. Ohne
+    # Guard liefe der Report-/Mail-/Dialog-Block doppelt und griffe auf die schon
+    # disposte Pipeline / genullte SyncHash-Werte zu.
+    if ($script:SessionEnded) { return }
+    $script:SessionEnded = $true
     if ($script:UITimer)    { $script:UITimer.Stop() }
     if ($script:ClockTimer) { $script:ClockTimer.Stop() }
     if (-not $completed -and $script:SyncHash) { $script:SyncHash.Stop = $true }
@@ -3285,9 +3345,17 @@ function End-Session {
                 overall         = if ($err -gt 0) { "error" } elseif ($warn -gt 0) { "warning" } else { "ok" }
                 modules         = $modules
             }
-            $jsonPath = [IO.Path]::ChangeExtension($script:LogPath, $null).TrimEnd('.') -replace 'Maintenance_', 'result_'
-            $jsonPath = "$jsonPath.json"
-            $report | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonPath -Encoding utf8
+            # Nur den DATEINAMEN umschreiben (verankert), nicht den ganzen Pfad per
+            # ungeankertem Regex - sonst wuerde ein Ordnerpfad, der "Maintenance_"
+            # enthaelt, mitumgeschrieben und das JSON landete im Nirgendwo.
+            $logDir   = Split-Path $script:LogPath
+            $logLeaf  = [IO.Path]::GetFileNameWithoutExtension($script:LogPath) -replace '^Maintenance_', 'result_'
+            $jsonPath = Join-Path $logDir "$logLeaf.json"
+            # BOM-frei schreiben: ConvertTo-Json | Out-File -Encoding utf8 setzt in
+            # PS5.1 ein fuehrendes UTF-8-BOM (EF BB BF) VOR die '{' - strikte JSON-
+            # Parser (Fleet-Auswertung, .NET System.Text.Json, Linux/NAS-Tools)
+            # stolpern darueber. WriteAllText mit UTF8Encoding($false) = ohne BOM.
+            [IO.File]::WriteAllText($jsonPath, ($report | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
             $script:LastResultJson = $jsonPath
             # Rotation: max. 20 Result-JSONs behalten (analog Log-Rotation)
             Get-ChildItem -Path (Split-Path $jsonPath) -Filter "result_*.json" -File -ErrorAction SilentlyContinue |

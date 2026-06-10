@@ -1,5 +1,49 @@
 # JustUpdate — Changelog
 
+## v2.6.13 (10.06.2026)
+
+**Stabilitaets-Release: 6 Bugs aus einem vollstaendigen Code-Audit gefixt.**
+
+- **Stop-Button wurde als Timeout fehlgemeldet.** Brach der Nutzer einen
+  laufenden Winget-/SFC-/DISM-Schritt per Stop ab, setzte der Watchdog
+  trotzdem `Killed=true` -> die Wartung meldete faelschlich
+  „nach X Min abgebrochen / reagierte nicht", obwohl der User selbst
+  gestoppt hatte. Jetzt wird ein User-Stop sauber vom echten Timeout
+  unterschieden; der Prozess wird zwar beendet (kein verwaister
+  Installer), aber nicht mehr als Timeout gewertet.
+
+- **Deadlock-Risiko beim Ausfuehren externer Tools.** `Invoke-Monitored-
+  Process` las erst stdout komplett, DANN stderr. Schrieb ein Tool
+  (z.B. DISM mit vielen Warnungen) genug nach stderr um den ~4-KB-Puffer
+  zu fuellen WAEHREND es weiter auf stdout schrieb, blockierten beide
+  Seiten gegenseitig bis der Watchdog nach Timeout killte. stderr wird
+  jetzt parallel in einem eigenen Runspace geleert -> kein Deadlock.
+  (Mit cmd-Stresstest 200 Zeilen stdout+stderr verifiziert.)
+
+- **Treiber-Modul meldete faelschlich „alle installiert (verifiziert)".**
+  Der pnputil-Fallback zaehlte ALLE `.inf` im Windows-Treiber-Cache als
+  Erfolg und rechnete sie gegen die haengenden Treiber - da der Cache
+  i.d.R. viel mehr `.inf` enthaelt, wurde die Fehlerzahl auf 0 gedrueckt.
+  Jetzt wird nach pnputil erneut verifiziert, welche der haengenden
+  Treiber WIRKLICH installiert wurden; nur die zaehlen.
+
+- **Abschluss lief bei Stop+Fertig doppelt.** `End-Session` war nicht
+  reentrant - Stop-Klick und der „fertig"-Tick des UI-Timers konnten es
+  fast gleichzeitig aufrufen, wodurch Report/Mail/Abschluss-Dialog
+  doppelt liefen und auf die bereits freigegebene Pipeline zugriffen.
+  Guard-Flag eingebaut.
+
+- **Report-JSON: Pfad-Bug bei bestimmten Ordnernamen.** Der Dateiname
+  wurde per ungeankertem Regex aus dem GANZEN Pfad ersetzt - lag der
+  Log-Ordner z.B. unter `...\Maintenance_Logs\`, wurde auch der
+  Ordnername umgeschrieben und das JSON landete im Nirgendwo. Jetzt
+  wird nur noch der Dateiname (verankert) umbenannt.
+
+- **Report-JSON hatte ein BOM.** `ConvertTo-Json | Out-File -Encoding
+  utf8` schrieb in PS5.1 ein UTF-8-BOM vor die `{` - strikte JSON-Parser
+  (Fleet-Auswertung, andere Tools) stolperten darueber. Wird jetzt
+  BOM-frei geschrieben.
+
 ## v2.6.12 (10.06.2026)
 
 **Bugfix: Apps mit „Neustart noetig" wurden faelschlich als fehlgeschlagen gemeldet.**
