@@ -1,4 +1,4 @@
-# Version: 2.6.11
+# Version: 2.6.12
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -32,7 +32,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.11' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.6.12' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -1828,6 +1828,18 @@ function Start-Maintenance {
                     L "  Starte Upgrade aller Apps..."
                     L ""
 
+                    # Erfolgs-Erkennung. NEBEN dem klaren "Erfolgreich installiert" gibt
+                    # es Pakete (z.B. Claude, Microsoft Teams, Edge-basierte Apps), die
+                    # melden "Die Installation war erfolgreich. Starten Sie die Anwendung
+                    # neu, um das Upgrade abzuschliessen." - das ist KEIN Fehler, sondern
+                    # ein erfolgreicher Update der nur noch einen App-Neustart braucht.
+                    # Frueher fiel dieser Satz durch alle Parser-Branches, das Paket blieb
+                    # in $cur haengen und wurde beim naechsten "(N/M) Gefunden" faelschlich
+                    # als fehlgeschlagen verbucht. Beide Phrasen zaehlen jetzt als Erfolg.
+                    $okRx = 'Successfully installed|Erfolgreich installiert|Installation reussie|Die Installation war erfolgreich|installation was successful|Restart the application to complete|Starten Sie die Anwendung neu|Redemarrez l.application'
+                    # Untermenge von $okRx: erfolgreich, aber App-Neustart noch offen.
+                    $restartRx = 'Restart the application to complete|Starten Sie die Anwendung neu|Redemarrez l.application'
+
                     # Inline-Parser: Output-Stream auswerten und pro Paket Status sammeln.
                     # Wichtig fuer in-use-Retry: wir muessen wissen WELCHE Apps wegen
                     # "Datei in Verwendung" gescheitert sind (Exit 1603/6 oder Klartext).
@@ -1839,7 +1851,7 @@ function Start-Maintenance {
                             $t = "$raw".Trim()
                             if ($t -match '^\(\d+/\d+\)\s+(?:Gefunden|Found|Trouve)\s+(.+?)\s+\[([^\]]+)\]') {
                                 if ($cur) { $fail += $cur }
-                                $cur = @{ Name = $Matches[1].Trim(); Id = $Matches[2].Trim(); Exit = $null; InUse = $false }
+                                $cur = @{ Name = $Matches[1].Trim(); Id = $Matches[2].Trim(); Exit = $null; InUse = $false; Restart = $false }
                             }
                             elseif ($t -match $inUseRx) {
                                 if ($cur) { $cur.InUse = $true }
@@ -1851,8 +1863,11 @@ function Start-Maintenance {
                                     $fail += $cur; $cur = $null
                                 }
                             }
-                            elseif ($t -match 'Successfully installed|Erfolgreich installiert|Installation reussie') {
-                                if ($cur) { $ok += $cur; $cur = $null }
+                            elseif ($t -match $okRx) {
+                                if ($cur) {
+                                    if ($t -match $restartRx) { $cur.Restart = $true }
+                                    $ok += $cur; $cur = $null
+                                }
                             }
                         }
                         if ($cur) { $fail += $cur }
@@ -1871,7 +1886,7 @@ function Start-Maintenance {
                     $combined = ($wgUpgradeOutput -join " ")
                     $nothingToDo = $combined -match 'kein installiertes Paket|No installed package|Aucun package install'
                     $parsed = & $parseWg $wgUpgradeOutput
-                    $installedAny = ($parsed.Installed.Count -gt 0) -or ($combined -match 'Successfully installed|Erfolgreich installiert|Installation reussie')
+                    $installedAny = ($parsed.Installed.Count -gt 0) -or ($combined -match $okRx)
                     $inUseFails = @($parsed.Failed | Where-Object { $_.InUse })
 
                     # 2. Retry-Pass NUR fuer in-use-Failures (1603/6/Klartext). Hartes
@@ -1968,7 +1983,7 @@ function Start-Maintenance {
                                    -Arguments "upgrade --id `"$($pkg.Id)`" --exact --disable-interactivity --accept-source-agreements --accept-package-agreements" `
                                    -TimeoutSec 1800
                             $rOut = $r.Lines -join " "
-                            if ($r.ExitCode -eq 0 -and ($rOut -match 'Successfully installed|Erfolgreich installiert|Installation reussie')) {
+                            if ($r.ExitCode -eq 0 -and ($rOut -match $okRx)) {
                                 L "    [OK] $($pkg.Name) im Retry aktualisiert"
                                 $retryInstalled += $pkg
                             } else {
@@ -1985,8 +2000,14 @@ function Start-Maintenance {
                         $id = $_.Id
                         -not ($retryInstalled | Where-Object { $_.Id -eq $id })
                     })
+                    # Erfolgreich aktualisiert, aber App-Neustart noch offen (kein Fehler).
+                    $restartNeeded = @($parsed.Installed | Where-Object { $_.Restart })
 
                     L ""
+                    if ($restartNeeded.Count -gt 0) {
+                        $rsNames = ($restartNeeded | ForEach-Object { $_.Name }) -join ", "
+                        L "  [HINWEIS] $($restartNeeded.Count) App(s) aktualisiert - Neustart der App schliesst das Upgrade ab: $rsNames"
+                    }
                     if ($wgTimedOut) {
                         L "  [WARNUNG] App-Updates nach 60 Min ohne Reaktion abgebrochen"
                         Mark "Winget" "warn" "Nach 60 Min abgebrochen - eine App hat zu lange gebraucht. Die uebrigen Apps wurden aktualisiert; bitte JustUpdate spaeter erneut ausfuehren."

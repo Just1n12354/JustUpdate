@@ -1,5 +1,27 @@
 # JustUpdate — Changelog
 
+## v2.6.12 (10.06.2026)
+
+**Bugfix: Apps mit „Neustart noetig" wurden faelschlich als fehlgeschlagen gemeldet.**
+- Im Kundenlauf vom 10.06.2026 meldete Modul „Apps (Winget)"
+  `Teilweise aktualisiert: 16 OK, 2 fehlgeschlagen` fuer **Claude**
+  und **Microsoft Teams** — obwohl beide Updates **sauber durchliefen**.
+- Ursache: Diese Pakete (Claude, Teams, weitere Edge-/Squirrel-basierte
+  Apps) geben statt `Erfolgreich installiert` den Satz
+  *„Die Installation war erfolgreich. Starten Sie die Anwendung neu,
+  um das Upgrade abzuschliessen."* aus. Diese Zeile fiel durch alle
+  Parser-Zweige; das Paket blieb im Puffer haengen und wurde beim
+  naechsten `(N/M) Gefunden` als **fehlgeschlagen** verbucht — ein
+  reiner Auswertungs-Fehler, kein echtes Update-Problem.
+- Fix: Die Erfolgs-Erkennung akzeptiert jetzt auch
+  „Die Installation war erfolgreich" sowie die Neustart-noetig-Phrasen
+  (DE/EN/FR). Solche Pakete zaehlen als **erfolgreich aktualisiert**.
+- Neu: Erfolgreich aktualisierte Apps, die nur noch einen App-Neustart
+  brauchen, werden klar als Hinweis ausgegeben
+  (`[HINWEIS] N App(s) aktualisiert - Neustart der App schliesst das
+  Upgrade ab: ...`) statt als Fehlalarm. Dieselbe Erkennung greift im
+  Hauptlauf, im in-use-Retry und in der Gesamt-Statusberechnung.
+
 ## v2.6.11 (23.05.2026 23:00)
 
 **Versions-Bump damit der Hotfix bei Kunden ankommt.**
