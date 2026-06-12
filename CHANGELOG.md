@@ -1,5 +1,49 @@
 # JustUpdate — Changelog
 
+## v2.7.0 (12.06.2026)
+
+**Gross-Update: Automatik-Modus, Zeitplan, gespeicherte Einstellungen, System-Vorabcheck.**
+
+- **NEU: Automatik-Modus (`-Auto`).** JustUpdate laeuft komplett unbeaufsichtigt:
+  startet die Wartung selbst, zeigt keine Dialoge, schliesst keine laufenden
+  Programme, beendet sich danach von selbst und liefert einen Exit-Code fuers
+  Fleet-Monitoring (0=OK, 1=Warnungen, 2=Fehler). Auch aktivierbar ueber die
+  Umgebungsvariable `JUSTUPDATE_AUTO=1`. Self-Update ist in diesem Modus aus
+  (braeuchte eine Bestaetigung) - der naechste manuelle Start holt es nach.
+- **NEU: Zeitplan-Button (Uhr-Symbol in der Titelleiste).** Ein Klick legt eine
+  woechentliche geplante Aufgabe an (Sonntag 11:00, hoechste Rechte, verpasste
+  Termine werden nachgeholt sobald der PC wieder an ist) - ein erneuter Klick
+  entfernt sie wieder.
+- **NEU: Einstellungen bleiben erhalten.** Modul-Auswahl und Sprache werden in
+  `settings.json` (im Log-Ordner) gespeichert und beim naechsten Start
+  automatisch wiederhergestellt.
+- **NEU: System-Vorabcheck.** Vor den Modulen prueft JustUpdate: Wartet Windows
+  bereits auf einen Neustart? Laeuft das Geraet auf Akku? Sind weniger als
+  10 GB auf der Systemplatte frei? -> klare Hinweise im Log statt kryptischer
+  Folgefehler.
+- **NEU: Neustart-Sammelmeldung.** "Neustart erforderlich" aus Windows-Update,
+  Treibern und SFC wird gesammelt und landet sichtbar im Abschluss-Dialog, in
+  der Log-Zusammenfassung und im result-JSON (`rebootRequired`).
+- **NEU: Modul-Dauer.** Jedes Modul loggt am Ende seine Laufzeit, die Dauer
+  steht zusaetzlich im result-JSON (`durationSeconds`) - "WO hing die Wartung
+  so lange?" ist damit auf einen Blick beantwortbar. Die Modul-Header zeigen
+  ausserdem "MODUL 3/7" (Position/ausgewaehlte Module) statt fixer Nummern.
+- **NEU: Schliessen-Schutz.** X-Klick oder Alt+F4 waehrend laufender Wartung
+  killte den Lauf bisher kommentarlos - mitten in einer Update-Installation.
+  Jetzt kommt eine Rueckfrage, und erst bei "Ja" wird sauber gestoppt.
+- **NEU: Bereinigung Schritt 6/6.** Der Delivery-Optimization-Cache (Peer-
+  Cache fuer Windows-Updates) wird per offiziellem Microsoft-Cmdlet geleert.
+- **Winget: Quellen-Index vor dem Upgrade aktualisiert** (`winget source
+  update`) - ein Tage alter Index uebersieht sonst frische Updates.
+- **Fix: Laufzeit-Uhr ging vor.** Die Anzeige rundete kaufmaennisch
+  ([int]-Cast statt Floor) und sprang dadurch ab Sekunde 30 jeder Minute
+  bereits eine Minute weiter.
+- **Aufgeraeumt: Tray-Blocker-Liste dedupliziert.** Die Liste der Update-
+  Blocker (OBS/Steam/Discord/...) stand doppelt im Code (Haupt-Thread und
+  Worker-Runspace) und konnte auseinanderlaufen - jetzt EINE Quelle, die per
+  SyncHash in den Worker wandert.
+- **Abschluss-Sound** nach fertiger Wartung (nur im interaktiven Modus).
+
 ## v2.6.13 (10.06.2026)
 
 **Stabilitaets-Release: 6 Bugs aus einem vollstaendigen Code-Audit gefixt.**

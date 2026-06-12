@@ -1,7 +1,16 @@
-# Version: 2.6.13
+# Version: 2.7.0
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
+
+# -Auto: Automatik-Modus fuer geplante Wartung (Task Scheduler / Zeitplan-
+# Button in der Titelleiste). Startet die Wartung ohne Klick mit den
+# gespeicherten Modulen, zeigt keine Dialoge, schliesst keine laufenden
+# Programme, beendet sich selbst und liefert einen Exit-Code fuers
+# Fleet-Monitoring (0=OK, 1=Warnungen, 2=Fehler).
+# Alternativ aktivierbar via Umgebungsvariable JUSTUPDATE_AUTO=1.
+param([switch]$Auto)
+
 # Determine script/exe path first
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
               elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path }
@@ -12,6 +21,10 @@ $ScriptPath = if ($PSCommandPath) { $PSCommandPath }
 # und Self-Update (wuerde die laufende .exe mit einer .ps1 ueberschreiben) NICHT
 # den .ps1-Pfad gehen. Die EXE aktualisiert sich spaeter ueber GitHub-Releases.
 $isExe = $ScriptPath -match '\.exe$'
+
+# Automatik-Modus aktiv? (Parameter ODER Umgebungsvariable, z.B. fuer
+# bestehende geplante Aufgaben, die keinen Parameter mitgeben koennen)
+$script:AutoMode = [bool]$Auto -or ($env:JUSTUPDATE_AUTO -eq '1')
 
 # Eine einzige Laufzeit-Versionsquelle fuer das ganze Skript (Footer, Report, ...).
 # .ps1: Header in Zeile 1.  .exe: aus den FileVersionInfo-Metadaten (von build.ps1
@@ -32,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.6.13' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.0' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -87,14 +100,18 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if ($isExe) {
     # EXE: nur fehlende Admin-Rechte sind relevant (STA/Edition setzt PS2EXE selbst).
     if (-not $isAdmin) {
-        Start-Process -FilePath $ScriptPath -Verb RunAs
+        # -Auto MUSS die Selbst-Elevation ueberleben, sonst bleibt der
+        # geplante Lauf nach dem UAC-Hop im interaktiven Modus haengen.
+        if ($script:AutoMode) { Start-Process -FilePath $ScriptPath -ArgumentList "-Auto" -Verb RunAs }
+        else                  { Start-Process -FilePath $ScriptPath -Verb RunAs }
         exit
     }
 } elseif ($PSVersionTable.PSEdition -eq "Core" -or
     [System.Threading.Thread]::CurrentThread.ApartmentState -ne "STA" -or
     -not $isAdmin) {
-    Start-Process powershell.exe -Verb RunAs `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$ScriptPath`""
+    $elevArgs = "-NoProfile -ExecutionPolicy Bypass -STA -File `"$ScriptPath`""
+    if ($script:AutoMode) { $elevArgs += " -Auto" }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $elevArgs
     exit
 }
 
@@ -104,7 +121,10 @@ if ($isExe) {
 # den Nutzer ob er das Update jetzt installieren will.
 # Deaktivierbar via Umgebungsvariable JUSTUPDATE_NO_SELFUPDATE=1.
 # =====================================================================
-if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1") {
+# Im Automatik-Modus KEIN Self-Update: der braucht eine MessageBox-Bestaetigung
+# und wuerde den unbeaufsichtigten Lauf blockieren. Der naechste manuelle Start
+# holt das Update nach.
+if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1" -and -not $script:AutoMode) {
     # ProgressPreference fuer den Download unterdruecken — sonst rendert Windows PowerShell
     # die deutsche Fortschrittsanzeige ("Webanforderung wird geschrieben / Anzahl geschriebener Bytes")
     # ueber das WPF-Window und macht Invoke-WebRequest ausserdem ~10x langsamer.
@@ -508,6 +528,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                     <Button x:Name="xMin" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="_" FontSize="14"/>
                     <Button x:Name="xInfo" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="i" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Acc}" Margin="0,0,4,0"/>
                     <Button x:Name="xPatch" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="?" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Fg}" Margin="0,0,4,0" ToolTip="Patch-Notes / Versions-Historie"/>
+                    <Button x:Name="xSched" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="&#x23F0;" FontSize="13" Foreground="{StaticResource Fg}" Margin="0,0,4,0" ToolTip="Automatische Wartung planen (woechentlich)"/>
                     <ComboBox x:Name="xLang" DockPanel.Dock="Right" Width="90" Height="26" Margin="0,0,8,0"
                               Background="{StaticResource BgCard}" Foreground="{StaticResource FgDim}"
                               BorderBrush="{StaticResource Bdr}" BorderThickness="1" FontSize="11">
@@ -783,7 +804,7 @@ try {
 # Get elements
 $e = @{}
 $allNames = @(
-    "TitleBar","xLang","xMin","xMax","xClose","xInfo","xPatch","xTitleBar",
+    "TitleBar","xLang","xMin","xMax","xClose","xInfo","xPatch","xSched","xTitleBar",
     "xTag","xTitle","xDesc","xModHdr",
     "xRestore","xRestoreD","xIcoRestore","xTglRestore",
     "xDefender","xDefenderD","xIcoDefender","xTglDefender",
@@ -842,6 +863,45 @@ $script:IconElements = @{
 $script:TextElements = @{
     Restore=$e.xRestore; Defender=$e.xDefender; WinUpdate=$e.xWinUpdate; Drivers=$e.xDrivers
     Winget=$e.xWinget; Store=$e.xStoreApps; Repair=$e.xRepair; Network=$e.xNetwork; Cleanup=$e.xCleanup
+}
+# Modul-ID -> Toggle-Schalter. Grundlage fuer Settings-Persistenz und Auto-Modus.
+$script:ToggleMap = @{
+    Restore=$e.xTglRestore; Defender=$e.xTglDefender; WinUpdate=$e.xTglWinUpdate; Drivers=$e.xTglDrivers
+    Winget=$e.xTglWinget; Store=$e.xTglStore; Repair=$e.xTglRepair; Network=$e.xTglNetwork; Cleanup=$e.xTglCleanup
+}
+
+# =====================================================================
+# SETTINGS-PERSISTENZ: Modul-Auswahl + Sprache ueberleben den Neustart.
+# Liegt im (verifiziert beschreibbaren) Log-Ordner als settings.json.
+# Komplett gekapselt - ein Defekt hier darf den App-Start NIE verhindern.
+# =====================================================================
+$script:SettingsPath = Join-Path $LogDir "settings.json"
+function Save-JUSettings {
+    try {
+        $mods = @{}
+        foreach ($k in $script:ToggleMap.Keys) { $mods[$k] = [bool]$script:ToggleMap[$k].IsChecked }
+        $s = [pscustomobject]@{ lang = $script:Lang; modules = [pscustomobject]$mods }
+        [IO.File]::WriteAllText($script:SettingsPath, ($s | ConvertTo-Json -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
+function Restore-JUSettings {
+    try {
+        if (-not (Test-Path $script:SettingsPath)) { return }
+        $s = Get-Content $script:SettingsPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        if ($s.lang -and $script:TR.ContainsKey([string]$s.lang)) {
+            foreach ($item in $e.xLang.Items) {
+                if ($item.Tag -eq [string]$s.lang) { $e.xLang.SelectedItem = $item; break }
+            }
+            $script:Lang = [string]$s.lang
+        }
+        if ($s.modules) {
+            foreach ($k in @($script:ToggleMap.Keys)) {
+                $p = $s.modules.PSObject.Properties[$k]
+                if ($null -ne $p) { $script:ToggleMap[$k].IsChecked = [bool]$p.Value }
+            }
+        }
+    } catch {}
 }
 
 function Set-ModIcon([string]$id, [string]$state) {
@@ -902,6 +962,9 @@ function Reset-AllIcons {
 # INIT
 # =====================================================================
 Update-UI
+# Gespeicherte Modul-Auswahl + Sprache wiederherstellen (settings.json).
+# Nach Update-UI, damit ein Sprach-Wechsel die Texte gleich mit umstellt.
+Restore-JUSettings
 
 try {
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
@@ -937,6 +1000,23 @@ $e.xMax.Add_Click({
     }
 })
 $e.xMin.Add_Click({ $Window.WindowState = "Minimized" })
+# Schliessen-Schutz: X-Klick/Alt-F4 waehrend laufender Wartung killte den Lauf
+# bisher kommentarlos (Runspace mitten in einer Update-Installation weg).
+# Jetzt: nachfragen, bei Ja sauber stoppen. Settings werden immer gespeichert.
+$Window.Add_Closing({
+    param($sender2, $ev)
+    $running = ($script:SyncHash -and -not $script:SyncHash.Done -and -not $script:SessionEnded)
+    if ($running -and -not $script:AutoMode) {
+        $a = [System.Windows.MessageBox]::Show(
+            "Die Wartung laeuft noch - ein Abbruch kann eine Update-Installation mittendrin stoppen.`n`nWirklich abbrechen und beenden?",
+            "JustUpdate - Wartung laeuft",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning)
+        if ($a -ne [System.Windows.MessageBoxResult]::Yes) { $ev.Cancel = $true; return }
+        try { End-Session } catch {}
+    }
+    try { Save-JUSettings } catch {}
+})
 $e.xLang.Add_SelectionChanged({
     $tag = $this.SelectedItem.Tag
     if ($tag) { $script:Lang = $tag; Update-UI }
@@ -952,6 +1032,29 @@ $script:UITimer    = $null
 $script:ClockTimer = $null
 $script:StartTime  = $null
 
+# Update-Blocker: oft als Tray/Helper aktiv, sperren Installer-Dateien.
+# Wildcards (-like) erlaubt — wichtig fuer App-Familien wie OBS, die
+# mehrere Helper-Prozesse mitlaufen lassen (obs-ffmpeg-mux, obs-amf-test,
+# OBS-Studio-Updater etc.), die der User nicht sieht aber den Winget-
+# Installer mit "Datei in Verwendung" / Exit 1603/6 blockieren.
+# EINE Quelle fuer Haupt-Thread UND Worker-Runspace (geht via $sync mit) -
+# vorher stand die Liste doppelt im Code und konnte auseinanderlaufen.
+$script:TrayBlockers = @(
+    "obs*",                                                 # alle OBS-Familien-Prozesse
+    "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
+    "Steam","steamwebhelper","GameOverlayUI",
+    "Discord","DiscordPTB","DiscordCanary",
+    "Spotify","SpotifyWebHelper",
+    "Teams","ms-teams","msedgewebview2",
+    "OneDrive","FileCoAuth","FileSyncHelper",
+    "Slack",
+    "Code","Code - Insiders",
+    "Cursor",
+    "Zoom","ZoomLauncher",
+    "WhatsApp",
+    "Telegram"
+)
+
 function Close-RunningUserApps {
     # Schliesst GUI-Prozesse mit Hauptfenster — sanft via CloseMainWindow().
     # Zusaetzlich: bekannte Update-Blocker, die im Tray OHNE MainWindow laufen
@@ -964,26 +1067,7 @@ function Close-RunningUserApps {
         "fontdrvhost","SearchHost","StartMenuExperienceHost","ShellExperienceHost",
         "TextInputHost","RuntimeBroker","ApplicationFrameHost","SecurityHealthSystray"
     )
-    # Update-Blocker: oft als Tray/Helper aktiv, sperren Installer-Dateien.
-    # Wildcards (-like) erlaubt — wichtig fuer App-Familien wie OBS, die
-    # mehrere Helper-Prozesse mitlaufen lassen (obs-ffmpeg-mux, obs-amf-test,
-    # OBS-Studio-Updater etc.), die der User nicht sieht aber den Winget-
-    # Installer mit "Datei in Verwendung" / Exit 1603/6 blockieren.
-    $trayBlockers = @(
-        "obs*",                                                 # alle OBS-Familien-Prozesse
-        "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
-        "Steam","steamwebhelper","GameOverlayUI",
-        "Discord","DiscordPTB","DiscordCanary",
-        "Spotify","SpotifyWebHelper",
-        "Teams","ms-teams","msedgewebview2",
-        "OneDrive","FileCoAuth","FileSyncHelper",
-        "Slack",
-        "Code","Code - Insiders",
-        "Cursor",
-        "Zoom","ZoomLauncher",
-        "WhatsApp",
-        "Telegram"
-    )
+    $trayBlockers = $script:TrayBlockers
     $myPid = $PID
     $closedNames = New-Object System.Collections.Generic.HashSet[string]
     # 1) Apps mit sichtbarem Fenster sanft schliessen (CloseMainWindow -> "Speichern?")
@@ -1028,10 +1112,20 @@ function Start-Maintenance {
     # Verhindert dass Update-Installer sich an gesperrten Dateien aufhaengen.
     # Winget mit reingenommen: Hauptursache fuer file-in-use sind Tray-Apps wie
     # OBS/Epic, die ueber winget aktualisiert werden.
+    # Aktuelle Auswahl direkt sichern - so laeuft der naechste (auch geplante)
+    # Lauf garantiert mit dem, was der User zuletzt eingestellt hat.
+    Save-JUSettings
+
     $needsClose = ([bool]$e.xTglWinUpdate.IsChecked) -or `
                   ([bool]$e.xTglStore.IsChecked) -or `
                   ([bool]$e.xTglWinget.IsChecked)
-    if ($needsClose) {
+    if ($needsClose -and $script:AutoMode) {
+        # Automatik-Modus: NIEMALS ungefragt Programme schliessen (ungespeicherte
+        # Daten!). Updates, die an gesperrten Dateien scheitern, holt der
+        # naechste manuelle Lauf nach. -2 = Marker "Auto-Modus, nicht gefragt".
+        $script:ClosedAppCount = -2
+        $script:ClosedAppNames = @()
+    } elseif ($needsClose) {
         $answer = [System.Windows.MessageBox]::Show(
             (T "CloseAppsMsg"),
             (T "CloseAppsTitle"),
@@ -1087,6 +1181,9 @@ function Start-Maintenance {
         ClosedAppCount = $script:ClosedAppCount
         ClosedAppNames = $script:ClosedAppNames
         AppVersion     = $script:JUVersion
+        TrayBlockers   = @($script:TrayBlockers)
+        AutoMode       = $script:AutoMode
+        RebootRequired = $false
     })
     $script:SyncHash = $sync
 
@@ -1142,7 +1239,12 @@ function Start-Maintenance {
         # Modul kuerzer als ein UI-Tick (150ms) braucht (z.B. Restore wenn schnell, Defender
         # wenn schon up-to-date). Vorher: $sync.Module = "id|state" wurde vom naechsten Modul
         # ueberschrieben bevor der UI-Timer "ok" -> Gruen anzeigen konnte.
-        function M($id,$s) { [void]$sync.ModuleQueue.Add("$id|$s") }
+        function M($id,$s) {
+            # "run" merkt sich Modul + Startzeit -> Finish-Module kann am Ende
+            # die Dauer loggen und in die Results haengen (Fleet-Report).
+            if ($s -eq "run") { $script:CurModule = $id; $script:CurModuleT0 = Get-Date }
+            [void]$sync.ModuleQueue.Add("$id|$s")
+        }
         function IsStopped { $sync.Stop -eq $true }
         # Mark result: status = ok|warn|err, details = free-text summary
         # UI: ok -> Gruen, warn -> Orange ("!"), err -> Rot+X
@@ -1150,6 +1252,21 @@ function Start-Maintenance {
             $sync.Results[$id] = @{ Status = $status; Details = $details }
             $uiState = switch ($status) { "ok" { "ok" } "warn" { "warn" } default { "err" } }
             M $id $uiState
+        }
+        # Modul-Dauer ins Log + in die Results (landet im result_*.json).
+        # Beantwortet die Support-Frage "WO hing die Wartung so lange?".
+        function Finish-Module {
+            if (-not $script:CurModule -or -not $script:CurModuleT0) { return }
+            $secs = [int]((Get-Date) - $script:CurModuleT0).TotalSeconds
+            $m2 = [int]($secs / 60); $s2 = $secs % 60
+            $dTxt = if ($m2 -gt 0) { "${m2}m ${s2}s" } else { "${s2}s" }
+            L "  (Modul-Dauer: $dTxt)"
+            try {
+                if ($sync.Results.ContainsKey($script:CurModule)) {
+                    $sync.Results[$script:CurModule].DurationSeconds = $secs
+                }
+            } catch {}
+            $script:CurModule = $null
         }
 
         # Heartbeat-Runspace fuer blockierende WUA-Calls (Download/Install). Die WUA-COM-APIs
@@ -1323,9 +1440,15 @@ function Start-Maintenance {
                         L "    -> $($names -join ', ')"
                     }
                 }
+            } elseif ($sync.ClosedAppCount -eq -2) {
+                L "  Vor-Update-Schritt: Automatik-Modus - laufende Programme werden bewusst NICHT geschlossen"
             } else {
                 L "  Vor-Update-Schritt: User hat das Schliessen abgelehnt - Updates koennen an gesperrten Dateien scheitern"
             }
+            L ""
+        }
+        if ($sync.AutoMode) {
+            L "  Modus: AUTOMATIK (geplante Wartung - keine Rueckfragen, kein Abschluss-Dialog)"
             L ""
         }
 
@@ -1369,12 +1492,44 @@ function Start-Maintenance {
         }
         L ""
 
+        # ── System-Vorabcheck ── Pending-Reboot / Akku / Plattenplatz.
+        # Bricht NICHTS ab - aber der User versteht Folgewarnungen (z.B. SFC
+        # "Neustart erforderlich" oder zaehe Downloads am Akku) sofort.
+        try {
+            $pendingReboot = (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") -or
+                             (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired")
+            if ($pendingReboot) {
+                $sync.RebootRequired = $true
+                L "  [HINWEIS] Windows wartet bereits auf einen NEUSTART (fruehere Updates)."
+                L "  Einzelne Module (SFC, Windows Update) koennen deshalb Warnungen melden."
+                L "  Am besten den PC nach der Wartung neu starten."
+                L ""
+            }
+        } catch {}
+        try {
+            $bat = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($bat -and $bat.BatteryStatus -eq 1) {
+                L "  [HINWEIS] Geraet laeuft auf AKKU ($($bat.EstimatedChargeRemaining)% geladen)."
+                L "  Bitte Netzteil anschliessen - Updates koennen lange dauern."
+                L ""
+            }
+        } catch {}
+        try {
+            $sysDisk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'" -ErrorAction SilentlyContinue
+            if ($sysDisk -and $sysDisk.FreeSpace -lt 10GB) {
+                $freeGb = [Math]::Round($sysDisk.FreeSpace / 1GB, 1)
+                L "  [WARNUNG] Wenig Speicherplatz auf $($env:SystemDrive) - nur $freeGb GB frei."
+                L "  Grosse Windows-Updates brauchen oft 10+ GB. Die Bereinigung schafft etwas Platz."
+                L ""
+            }
+        } catch {}
+
         # ── RESTORE POINT ──
         if ($cfg.Restore) {
             if (IsStopped) { $sync.Done = $true; return }
             M "Restore" "run"
             L "--------------------------------------------"
-            L "  MODUL 1: Wiederherstellungspunkt"
+            L "  MODUL $($i+1)/${total}: Wiederherstellungspunkt"
             L "--------------------------------------------"
             L "  Systemschutz aktivieren auf C:\..."
             try {
@@ -1423,6 +1578,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Restore" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -1432,7 +1588,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Defender" "run"
             L "--------------------------------------------"
-            L "  MODUL 2: Windows Defender"
+            L "  MODUL $($i+1)/${total}: Windows Defender"
             L "--------------------------------------------"
             try {
                 # Drittanbieter-AV (Norton/Avast/...) erkennen: dann ist Defender
@@ -1501,6 +1657,7 @@ function Start-Maintenance {
                     Mark "Defender" "err" $_.Exception.Message
                 }
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -1510,7 +1667,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "WinUpdate" "run"
             L "--------------------------------------------"
-            L "  MODUL 3: Windows Updates"
+            L "  MODUL $($i+1)/${total}: Windows Updates"
             L "--------------------------------------------"
             try {
                 L "  Windows Update Service initialisieren..."
@@ -1621,7 +1778,7 @@ function Start-Maintenance {
                         }
                         L ""
                         L "  $successCount von $($instColl.Count) Updates erfolgreich installiert"
-                        if ($r.RebootRequired) { L "  >>> NEUSTART ERFORDERLICH <<<" }
+                        if ($r.RebootRequired) { L "  >>> NEUSTART ERFORDERLICH <<<"; $sync.RebootRequired = $true }
 
                         if ($failCount -eq 0 -and -not $dlFailed) {
                             Mark "WinUpdate" "ok" "$successCount Updates installiert"
@@ -1640,6 +1797,7 @@ function Start-Maintenance {
                 L "  [FEHLER] COM-API: $($_.Exception.Message)"
                 Mark "WinUpdate" "err" "COM-API Fehler: $($_.Exception.Message)"
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -1649,7 +1807,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Drivers" "run"
             L "--------------------------------------------"
-            L "  MODUL 4: Treiber-Updates"
+            L "  MODUL $($i+1)/${total}: Treiber-Updates"
             L "--------------------------------------------"
             try {
                 L "  Windows Update Service fuer Treiber initialisieren..."
@@ -1731,7 +1889,7 @@ function Start-Maintenance {
                             $reportedOk += $dColl.Item($idx).Title
                         } else { $drvFail++ }
                     }
-                    if ($r.RebootRequired) { L "  >>> NEUSTART ERFORDERLICH <<<" }
+                    if ($r.RebootRequired) { L "  >>> NEUSTART ERFORDERLICH <<<"; $sync.RebootRequired = $true }
 
                     # FIX v2.3.3: Verifikation - WUA-ResultCode=2 luegt bei optionalen/superseded Treibern.
                     # Re-Search; was immer noch IsInstalled=0 ist, wurde NICHT wirklich installiert.
@@ -1829,6 +1987,7 @@ function Start-Maintenance {
                     Mark "Drivers" "err" $_.Exception.Message
                 }
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -1838,7 +1997,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Winget" "run"
             L "--------------------------------------------"
-            L "  MODUL 5: Apps aktualisieren (Winget)"
+            L "  MODUL $($i+1)/${total}: Apps aktualisieren (Winget)"
             L "--------------------------------------------"
             try {
                 $wg = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
@@ -1868,6 +2027,14 @@ function Start-Maintenance {
                 }
                 if ($wg) {
                     L "  Winget gefunden: $wg"
+
+                    # Quellen-Index aktualisieren - sonst arbeitet winget u.U. mit
+                    # einem Tage alten Paket-Index und uebersieht frische Updates.
+                    # Kurzes Timeout, Fehler unkritisch (dann gilt der alte Index).
+                    L "  Aktualisiere Winget-Quellen..."
+                    $null = Invoke-MonitoredProcess -FileName $wg `
+                              -Arguments "source update --disable-interactivity" -TimeoutSec 120
+
                     L "  Pruefe verfuegbare Updates..."
                     L ""
 
@@ -1955,19 +2122,9 @@ function Start-Maintenance {
                         L "  Beende Tray/Helper-Prozesse und versuche es nochmal..."
                         # Inline-Tray-Kill — wir sind im Worker-Runspace, die globale
                         # Close-RunningUserApps ist hier nicht sichtbar. Wildcards
-                        # via -like (z.B. 'obs*' fuer alle OBS-Helper). Liste muss
-                        # mit der im Hauptskript synchron bleiben.
-                        $retryBlockers = @(
-                            "obs*",
-                            "EpicGamesLauncher","EpicWebHelper","UnrealCEFSubProcess",
-                            "Steam","steamwebhelper","GameOverlayUI",
-                            "Discord","DiscordPTB","DiscordCanary",
-                            "Spotify","SpotifyWebHelper",
-                            "Teams","ms-teams","msedgewebview2",
-                            "OneDrive","FileCoAuth","FileSyncHelper",
-                            "Slack","Code","Code - Insiders","Cursor",
-                            "Zoom","ZoomLauncher","WhatsApp","Telegram"
-                        )
+                        # via -like (z.B. 'obs*' fuer alle OBS-Helper). Liste kommt
+                        # aus $script:TrayBlockers (via $sync) - EINE Quelle.
+                        $retryBlockers = @($sync.TrayBlockers)
                         Get-Process -ErrorAction SilentlyContinue | Where-Object {
                             $pn = $_.ProcessName
                             (@($retryBlockers | Where-Object { $pn -like $_ }).Count -gt 0)
@@ -2096,6 +2253,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Winget" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -2105,7 +2263,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Store" "run"
             L "--------------------------------------------"
-            L "  MODUL 6: Microsoft Store Apps"
+            L "  MODUL $($i+1)/${total}: Microsoft Store Apps"
             L "--------------------------------------------"
             try {
                 # Schritt 1: MDM-Scan triggern (signalisiert dem Store-Backend dass es Updates pruefen soll).
@@ -2216,6 +2374,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Store" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -2225,7 +2384,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Repair" "run"
             L "--------------------------------------------"
-            L "  MODUL 7: System-Reparatur"
+            L "  MODUL $($i+1)/${total}: System-Reparatur"
             L "--------------------------------------------"
             try {
                 L "  Schritt 1/2: SFC (System File Checker)"
@@ -2252,6 +2411,7 @@ function Start-Maintenance {
                     L "  [WARNUNG] SFC reagierte 30 Min nicht - abgebrochen und uebersprungen"
                 } elseif ($sfcPending) {
                     L "  [WARNUNG] SFC uebersprungen - Neustart erforderlich, dann erneut ausfuehren"
+                    $sync.RebootRequired = $true
                 } else {
                     L "  [FEHLER] SFC fehlgeschlagen (Exit-Code: $sfcExit)"
                 }
@@ -2324,6 +2484,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Repair" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -2333,7 +2494,7 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Network" "run"
             L "--------------------------------------------"
-            L "  MODUL 8: Netzwerk reparieren"
+            L "  MODUL $($i+1)/${total}: Netzwerk reparieren"
             L "--------------------------------------------"
             try {
                 $netFailures = @()
@@ -2424,6 +2585,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Network" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -2433,11 +2595,11 @@ function Start-Maintenance {
             if (IsStopped) { $sync.Done = $true; return }
             M "Cleanup" "run"
             L "--------------------------------------------"
-            L "  MODUL 9: Bereinigung & Optimierung"
+            L "  MODUL $($i+1)/${total}: Bereinigung & Optimierung"
             L "--------------------------------------------"
             try {
                 # Papierkorb
-                L "  Schritt 1/5: Papierkorb leeren..."
+                L "  Schritt 1/6: Papierkorb leeren..."
                 try {
                     Clear-RecycleBin -Force -ErrorAction Stop
                     L "    [OK] Papierkorb geleert"
@@ -2446,13 +2608,13 @@ function Start-Maintenance {
                 }
 
                 # DNS Cache
-                L "  Schritt 2/5: DNS-Cache leeren..."
+                L "  Schritt 2/6: DNS-Cache leeren..."
                 & ipconfig /flushdns 2>&1 | Out-Null
                 L "    [OK] DNS-Cache geleert"
 
                 # Temp Dateien (alle User-Profile + System-Temp)
                 # Iteriert C:\Users\*\AppData\Local\Temp dynamisch — keine Hardcoded-Usernames.
-                L "  Schritt 3/5: Temporaere Dateien entfernen..."
+                L "  Schritt 3/6: Temporaere Dateien entfernen..."
                 $removed = 0
                 $freedMB = 0
                 $tempDirs = New-Object System.Collections.Generic.List[string]
@@ -2485,7 +2647,7 @@ function Start-Maintenance {
                 # FIX v2.3.3: wuauserv + bits stoppen vor dem Wipe — sonst koennen halb-fertige
                 # Downloads von Settings/UsoSvc den Fehler 0x80070003 ausloesen. Aelter-als-1-Tag-Filter
                 # verhindert ausserdem, dass eine LAUFENDE Settings-Update-Sitzung gekillt wird.
-                L "  Schritt 4/5: Windows Update Cache..."
+                L "  Schritt 4/6: Windows Update Cache..."
                 try {
                     $wuCache = "C:\Windows\SoftwareDistribution\Download"
                     if (Test-Path $wuCache) {
@@ -2524,7 +2686,7 @@ function Start-Maintenance {
 
                 # Thumbnail Cache (alle User-Profile)
                 # Iteriert C:\Users\*\AppData\Local\Microsoft\Windows\Explorer dynamisch.
-                L "  Schritt 5/5: Thumbnail-Cache..."
+                L "  Schritt 5/6: Thumbnail-Cache..."
                 try {
                     $thumbCount = 0
                     $thumbSize = 0
@@ -2549,6 +2711,19 @@ function Start-Maintenance {
                     L "    [OK] $thumbCount Cache-Dateien ($([Math]::Round($thumbSize / 1MB, 1)) MB)"
                 } catch {}
 
+                # Delivery-Optimization-Cache (Peer-Cache fuer Windows-Updates).
+                # Offizielles Microsoft-Cmdlet, loescht NUR den DO-Cache - keine
+                # User-Daten. Auf aelteren Systemen fehlt das Cmdlet -> ueberspringen.
+                L "  Schritt 6/6: Delivery-Optimization-Cache..."
+                try {
+                    if (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue) {
+                        Delete-DeliveryOptimizationCache -Force -ErrorAction Stop
+                        L "    [OK] Delivery-Optimization-Cache geleert"
+                    } else {
+                        L "    Auf diesem System nicht verfuegbar - uebersprungen"
+                    }
+                } catch { L "    Konnte nicht geleert werden (laeuft evtl. gerade ein Download) - uebersprungen" }
+
                 L ""
                 L "  [OK] Bereinigung abgeschlossen"
                 Mark "Cleanup" "ok" "$removed Dateien, $([Math]::Round($freedMB,1)) MB freigegeben"
@@ -2556,6 +2731,7 @@ function Start-Maintenance {
                 L "  [FEHLER] $($_.Exception.Message)"
                 Mark "Cleanup" "err" $_.Exception.Message
             }
+            Finish-Module
             $i++; P ($i / $total * 100)
             L ""
         }
@@ -2597,6 +2773,9 @@ function Start-Maintenance {
         $sync.SummaryDetails = ($issueLines -join "`n`n")
         L "============================================"
         L "  $okCount OK, $warnCount Warnungen, $errCount Fehler"
+        if ($sync.RebootRequired) {
+            L "  >>> NEUSTART ERFORDERLICH - bitte den PC zeitnah neu starten <<<"
+        }
         L "  $(Get-Date -F 'dd.MM.yyyy HH:mm:ss')"
         L "============================================"
         $sync.SummaryOk   = $okCount
@@ -2614,7 +2793,9 @@ function Start-Maintenance {
     $script:ClockTimer.Add_Tick({
         if ($script:StartTime) {
             $el = (Get-Date) - $script:StartTime
-            $e.xTime.Text = "{0:D2}:{1:D2}" -f [int]$el.TotalMinutes, $el.Seconds
+            # Floor statt [int]-Cast: der rundet kaufmaennisch (1.5 -> 2) und
+            # liess die Uhr ab Sekunde 30 jeder Minute eine Minute vorgehen.
+            $e.xTime.Text = "{0:D2}:{1:D2}" -f [int][Math]::Floor($el.TotalMinutes), $el.Seconds
         }
     })
     $script:ClockTimer.Start()
@@ -3325,9 +3506,10 @@ function End-Session {
                 foreach ($k in @($script:SyncHash.Results.Keys)) {
                     $r = $script:SyncHash.Results[$k]
                     $modules += [PSCustomObject]@{
-                        module  = $k
-                        status  = [string]$r.Status
-                        details = [string]$r.Details
+                        module          = $k
+                        status          = [string]$r.Status
+                        details         = [string]$r.Details
+                        durationSeconds = if ($r.ContainsKey('DurationSeconds')) { [int]$r.DurationSeconds } else { $null }
                     }
                 }
             }
@@ -3343,6 +3525,8 @@ function End-Session {
                 durationSeconds = if ($started) { [int]((Get-Date) - $started).TotalSeconds } else { $null }
                 summary         = [PSCustomObject]@{ ok = $ok; warnings = $warn; errors = $err }
                 overall         = if ($err -gt 0) { "error" } elseif ($warn -gt 0) { "warning" } else { "ok" }
+                rebootRequired  = [bool]($script:SyncHash -and $script:SyncHash.RebootRequired)
+                autoMode        = [bool]$script:AutoMode
                 modules         = $modules
             }
             # Nur den DATEINAMEN umschreiben (verankert), nicht den ganzen Pfad per
@@ -3375,7 +3559,21 @@ function End-Session {
             }
         } catch { }
 
+        # Automatik-Modus: kein Dialog, kein Mail-Prompt - Report ist geschrieben,
+        # Exit-Code gesetzt, Fenster zu. Task Scheduler sieht 0/1/2.
+        if ($script:AutoMode) {
+            $script:AutoExitCode = if ($err -gt 0) { 2 } elseif ($warn -gt 0) { 1 } else { 0 }
+            try { $Window.Close() } catch {}
+            return
+        }
+
+        # Dezenter Abschluss-Sound - der User darf waehrend der langen Wartung
+        # woanders sein und hoert trotzdem, dass sie fertig ist.
+        try { [System.Media.SystemSounds]::Asterisk.Play() } catch {}
+
         $msg    = "$ok erfolgreich, $warn Warnungen, $err Fehler"
+        $rebootNeeded = [bool]($script:SyncHash -and $script:SyncHash.RebootRequired)
+        if ($rebootNeeded) { $msg += "`n`n>>> NEUSTART ERFORDERLICH - bitte den PC zeitnah neu starten. <<<" }
         $icon   = if ($err -gt 0) { "Error" } elseif ($warn -gt 0) { "Warning" } else { "Information" }
         $header = if ($err -gt 0) { "Wartung mit Fehlern beendet" }
                   elseif ($warn -gt 0) { "Wartung mit Warnungen beendet" }
@@ -3479,6 +3677,68 @@ $e.xStop.Add_Click({ End-Session })
 $e.xLog.Add_Click({ Start-Process notepad.exe "`"$($script:LogPath)`"" })
 $e.xPatch.Add_Click({ Show-PatchHistory })
 
+# Zeitplan-Button: legt eine woechentliche geplante Aufgabe an (Sonntag 11:00),
+# die JustUpdate im Automatik-Modus (-Auto) startet - oder entfernt sie wieder.
+# Laeuft als angemeldeter User mit hoechsten Rechten (RunLevel Highest), damit
+# kein UAC-Prompt den unbeaufsichtigten Lauf blockiert. Bewusst Interactive:
+# als SYSTEM koennte das WPF-Fenster in Session 0 nicht zuverlaessig laufen.
+$e.xSched.Add_Click({
+    $taskName = "JustUpdate Auto-Wartung"
+    try {
+        $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($existing) {
+            $a = [System.Windows.MessageBox]::Show(
+                "Die automatische Wartung ist bereits eingeplant:`n`n" +
+                "  Aufgabe: $taskName`n  Rhythmus: woechentlich, Sonntag 11:00`n`n" +
+                "Geplante Aufgabe ENTFERNEN?",
+                "JustUpdate - Zeitplan",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question)
+            if ($a -eq [System.Windows.MessageBoxResult]::Yes) {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+                [System.Windows.MessageBox]::Show("Die geplante Aufgabe wurde entfernt.",
+                    "JustUpdate - Zeitplan", "OK", "Information") | Out-Null
+            }
+            return
+        }
+        $a = [System.Windows.MessageBox]::Show(
+            "JustUpdate kann die komplette Wartung automatisch ausfuehren:`n`n" +
+            "  - jeden Sonntag um 11:00 Uhr (PC muss an + User angemeldet sein)`n" +
+            "  - mit den aktuell gespeicherten Modulen`n" +
+            "  - ohne Nachfragen und ohne Abschluss-Dialog`n" +
+            "  - laufende Programme werden NICHT geschlossen`n`n" +
+            "Jetzt einplanen?",
+            "JustUpdate - Zeitplan",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question)
+        if ($a -ne [System.Windows.MessageBoxResult]::Yes) { return }
+        Save-JUSettings
+        if ($isExe) {
+            $action = New-ScheduledTaskAction -Execute $ScriptPath -Argument "-Auto"
+        } else {
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+                        -Argument "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$ScriptPath`" -Auto"
+        }
+        $trigger   = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "11:00"
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+                        -RunLevel Highest -LogonType Interactive
+        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+                        -DontStopIfGoingOnBatteries -StartWhenAvailable `
+                        -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+            -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+        [System.Windows.MessageBox]::Show(
+            "Eingeplant: '$taskName' laeuft jeden Sonntag um 11:00 Uhr.`n`n" +
+            "Verpasste Termine werden nachgeholt, sobald der PC wieder an ist.`n" +
+            "Entfernen: einfach nochmal auf das Uhr-Symbol klicken.",
+            "JustUpdate - Zeitplan", "OK", "Information") | Out-Null
+    } catch {
+        [System.Windows.MessageBox]::Show(
+            "Zeitplan konnte nicht angelegt/geaendert werden:`n`n$($_.Exception.Message)",
+            "JustUpdate - Zeitplan", "OK", "Warning") | Out-Null
+    }
+})
+
 $e.xInfo.Add_Click({
     $infoMsg = @"
 JustUpdate haelt Ihren PC sauber und aktuell - mit einem einzigen Klick.
@@ -3528,6 +3788,14 @@ ZUSAETZLICHE FUNKTIONEN:
   WEISS = noch nicht gestartet, ROT = laeuft gerade, GRUEN = erfolgreich abgeschlossen.
 - Alle Aktionen werden mitprotokolliert. Den letzten Log oeffnen Sie ueber 'LOG OEFFNEN'.
 - Es werden maximal die 10 neuesten Logs aufbewahrt, aeltere werden automatisch geloescht.
+- Ihre Modul-Auswahl und Sprache werden gespeichert und beim naechsten Start
+  automatisch wiederhergestellt.
+- Ueber das Uhr-Symbol oben rechts laesst sich eine woechentliche automatische
+  Wartung einplanen (Sonntag 11:00). Sie laeuft ohne Nachfragen, schliesst keine
+  Programme und beendet sich selbst. Erneuter Klick entfernt den Zeitplan.
+- Vor der Wartung prueft JustUpdate automatisch: Internet-Verbindung, offener
+  Windows-Neustart, Akku-Betrieb und freier Speicherplatz - und sagt klar,
+  wenn etwas davon die Wartung beeintraechtigen koennte.
 
 WAS DIESE ANWENDUNG NICHT MACHT:
 
@@ -3584,5 +3852,16 @@ $Window.Add_Loaded({
     if ($consoleHwnd -ne [IntPtr]::Zero) {
         [Native.Win32]::ShowWindow($consoleHwnd, 0) | Out-Null
     }
+    # Automatik-Modus: Wartung ohne Klick starten - erst wenn das Fenster
+    # fertig gerendert ist (ApplicationIdle), sonst fehlen ActualWidth & Co.
+    if ($script:AutoMode) {
+        $Window.Dispatcher.BeginInvoke(
+            [Action]{ Start-Maintenance },
+            [System.Windows.Threading.DispatcherPriority]::ApplicationIdle) | Out-Null
+    }
 })
 $Window.ShowDialog() | Out-Null
+
+# Automatik-Modus: Exit-Code an den Task Scheduler / das Fleet-Monitoring
+# durchreichen (0 = alles OK, 1 = Warnungen, 2 = Fehler).
+if ($script:AutoMode -and $null -ne $script:AutoExitCode) { exit $script:AutoExitCode }
