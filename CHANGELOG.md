@@ -1,5 +1,17 @@
 # JustUpdate — Changelog
 
+## v2.7.2 (15.06.2026)
+
+- **Fix: Live-Protokoll blieb waehrend der Wartung komplett leer (Regression aus
+  v2.7.1).** Die in v2.7.1 neu eingefuehrte Aufbereitungs-Funktion `Format-LiveLine`
+  war nur lokal in `Start-Maintenance` definiert. Der UI-Timer-Tick feuert aber
+  erst, NACHDEM `Start-Maintenance` zurueckgekehrt ist - dann existiert die lokale
+  Funktion nicht mehr, der Aufruf wirft "nicht erkannt", und weil die Zeile zuvor
+  schon aus der Queue entfernt wurde, verschluckte das `catch { break }` jede Zeile.
+  Ergebnis: Fortschrittsbalken lief, aber das Live-Feld blieb leer. Fix: Funktion
+  in den `script:`-Scope gelegt, damit sie auch im Timer-Tick erreichbar bleibt.
+  Die Logdatei war nie betroffen.
+
 ## v2.7.1 (15.06.2026)
 
 - **Fix: Defender meldete einen harten Fehler bei einem reinen RPC-Aussetzer.**

@@ -1,4 +1,4 @@
-# Version: 2.7.1
+# Version: 2.7.2
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.1' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.2' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -2853,7 +2853,12 @@ function Start-Maintenance {
     # Ablauf folgen koennen: Zeitstempel raus, Trennlinien raus, Modul-Koepfe
     # als klare "Schritt X von N"-Ueberschriften, Status-Marker als Symbole.
     # Rueckgabe $null = Zeile auf dem Bildschirm ueberspringen.
-    function Format-LiveLine($raw) {
+    # WICHTIG: script:-Scope. Der UI-Timer-Tick feuert ERST nachdem
+    # Start-Maintenance zurueckgekehrt ist - eine nur lokal definierte Funktion
+    # ist dann weg, der Aufruf wirft "nicht erkannt", und weil die Zeile oben
+    # schon aus $s.Lines entfernt wurde, schluckt 'catch { break }' jede Zeile
+    # -> Live-Protokoll bleibt leer. (Regression v2.7.1)
+    function script:Format-LiveLine($raw) {
         if ($null -eq $raw) { return $null }
         # 1) "[HH:mm:ss] "-Praefix entfernen (live nur Rauschen).
         $t = $raw -replace '^\[\d{2}:\d{2}:\d{2}\]\s?', ''
