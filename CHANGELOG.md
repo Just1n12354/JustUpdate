@@ -1,5 +1,29 @@
 # JustUpdate — Changelog
 
+## v2.7.1 (15.06.2026)
+
+- **Fix: Defender meldete einen harten Fehler bei einem reinen RPC-Aussetzer.**
+  `Update-MpSignature` spricht den Defender-Dienst per RPC an; dieser Aufruf
+  scheitert haeufig transient mit "Der Remoteprozeduraufruf ist fehlgeschlagen"
+  (0x800706BE) - typisch waehrend/nach einem Defender-Plattform-Update oder bei
+  ausstehendem Neustart. Bisher landete das als roter Fehler im Ergebnis
+  (`overall: error`). Jetzt versucht JustUpdate zuerst einen echten Fallback
+  ueber `MpCmdRun.exe` (eigener Prozess, kein PowerShell-RPC); klappt auch das
+  nicht und steht ein Neustart aus, wird es - analog zu SFC/Reparatur - nur als
+  Warnung gemeldet ("Kein echter Fehler, bitte neu starten") statt als Defekt.
+- **NEU: Neustart-Nachfrage am Ende.** Steht nach der Wartung ein Neustart an,
+  erscheint jetzt - nach der Zusammenfassung - ein eigener Ja/Nein-Dialog
+  ("Jetzt neu starten?"). Reiner Vorschlag: "Ja" startet geplant in 20 s neu
+  (abbrechbar mit `shutdown /a`), "Nein" laesst alles wie es ist. Der bisherige
+  statische ">>> NEUSTART ERFORDERLICH <<<"-Text in der Abschlussmeldung
+  entfaellt dadurch. Im Automatik-Modus erscheint die Nachfrage nicht.
+- **Verbessert: Live-Ansicht waehrend der Wartung leserlicher.** Das
+  Terminal-Feld in der App zeigt den Ablauf jetzt menschenfreundlich aufbereitet
+  (Zeitstempel und Trennlinien raus, Modul-Koepfe als klare "Schritt X von N"-
+  Ueberschriften, Status-Marker als Symbole). Die **Logdatei bleibt unveraendert**
+  1:1 mit allen Zeitstempeln erhalten - nur die Bildschirm-Darstellung ist
+  entkoppelt und fuehrt den Benutzer besser durch den Lauf.
+
 ## v2.7.0 (12.06.2026)
 
 **Gross-Update: Automatik-Modus, Zeitplan, gespeicherte Einstellungen, System-Vorabcheck.**

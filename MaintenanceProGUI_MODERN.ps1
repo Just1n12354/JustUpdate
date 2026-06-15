@@ -1,4 +1,4 @@
-# Version: 2.7.0
+# Version: 2.7.1
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.0' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.1' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -1653,8 +1653,55 @@ function Start-Maintenance {
                     L "  [OK] Defender-Update nicht moeglich - Drittanbieter-AV aktiv: $otherAv"
                     Mark "Defender" "ok" "Fremd-AV aktiv ($otherAv)"
                 } else {
-                    L "  [FEHLER] $($_.Exception.Message)"
-                    Mark "Defender" "err" $_.Exception.Message
+                    # Update-MpSignature ruft den Defender-Dienst per RPC auf. Dieser
+                    # Aufruf scheitert haeufig TRANSIENT mit "Der Remoteprozeduraufruf
+                    # ist fehlgeschlagen" (0x800706BE) - typisch waehrend/nach einem
+                    # Defender-Plattform-Update oder bei ausstehendem Neustart. Das ist
+                    # kein echter Defekt -> nicht als harter Fehler melden.
+                    $defErr = $_.Exception.Message
+                    $isRpc  = $defErr -match 'Remoteprozeduraufruf|800706BE|RPC server'
+                    # 1) Echter Reparaturversuch: MpCmdRun.exe laeuft als eigener Prozess
+                    #    (kein PowerShell-RPC) und kommt oft durch, wo das Cmdlet scheitert.
+                    $mpCmd = $null
+                    $platformBase = Join-Path $env:ProgramData 'Microsoft\Windows Defender\Platform'
+                    if (Test-Path $platformBase) {
+                        $mpCmd = Get-ChildItem $platformBase -Directory -ErrorAction SilentlyContinue |
+                            Sort-Object Name -Descending |
+                            ForEach-Object { Join-Path $_.FullName 'MpCmdRun.exe' } |
+                            Where-Object { Test-Path $_ } | Select-Object -First 1
+                    }
+                    if (-not $mpCmd) {
+                        $fb = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+                        if (Test-Path $fb) { $mpCmd = $fb }
+                    }
+                    $fallbackOk = $false
+                    if ($mpCmd) {
+                        L "  Cmdlet fehlgeschlagen ($defErr) - Fallback ueber MpCmdRun.exe..."
+                        try {
+                            $mpOut = & $mpCmd -SignatureUpdate 2>&1
+                            if ($LASTEXITCODE -eq 0) {
+                                L "  [OK] Defender-Signaturen ueber MpCmdRun aktualisiert"
+                                Mark "Defender" "ok" "Signaturen aktualisiert (MpCmdRun-Fallback)"
+                                $fallbackOk = $true
+                            } else {
+                                L "  MpCmdRun-Fallback ohne Erfolg (Exit $LASTEXITCODE)"
+                            }
+                        } catch {
+                            L "  MpCmdRun-Fallback nicht ausfuehrbar: $($_.Exception.Message)"
+                        }
+                    }
+                    # 2) Auch der Fallback hat nicht geklappt: bei RPC-/Neustart-Lage als
+                    #    WARNUNG melden (kein echter Fehler), sonst als harten Fehler.
+                    if (-not $fallbackOk) {
+                        if ($isRpc -or $pendingReboot -or $sync.RebootRequired) {
+                            L "  [WARNUNG] Defender-Signatur-Update aktuell nicht moeglich (RPC/Neustart ausstehend)."
+                            L "  Kein echter Fehler: bitte den PC neu starten - Defender aktualisiert sich danach selbst."
+                            Mark "Defender" "warn" "Kein echter Fehler: RPC fehlgeschlagen / Neustart ausstehend. Bitte den PC neu starten - Defender aktualisiert sich danach selbst."
+                        } else {
+                            L "  [FEHLER] $defErr"
+                            Mark "Defender" "err" $defErr
+                        }
+                    }
                 }
             }
             Finish-Module
@@ -2800,6 +2847,31 @@ function Start-Maintenance {
     })
     $script:ClockTimer.Start()
 
+    # Display-Aufbereitung NUR fuer die Live-Ansicht (xLogBox). Die Logdatei
+    # bleibt 1:1 erhalten (Zeitstempel, Trennlinien, [OK]/[FEHLER] - perfekt
+    # zum Auswerten). Auf dem Bildschirm soll der Mensch dagegen gefuehrt dem
+    # Ablauf folgen koennen: Zeitstempel raus, Trennlinien raus, Modul-Koepfe
+    # als klare "Schritt X von N"-Ueberschriften, Status-Marker als Symbole.
+    # Rueckgabe $null = Zeile auf dem Bildschirm ueberspringen.
+    function Format-LiveLine($raw) {
+        if ($null -eq $raw) { return $null }
+        # 1) "[HH:mm:ss] "-Praefix entfernen (live nur Rauschen).
+        $t = $raw -replace '^\[\d{2}:\d{2}:\d{2}\]\s?', ''
+        $trim = $t.Trim()
+        # 2) Reine Trennlinien (----- / =====) ausblenden.
+        if ($trim -match '^[-=]{4,}$') { return $null }
+        # 3) Modul-Kopf "MODUL x/total: Name" -> gefuehrte Schritt-Ueberschrift.
+        if ($trim -match '^MODUL\s+(\d+)/(\d+):\s*(.+)$') {
+            return "`r`n>> Schritt $($Matches[1]) von $($Matches[2]):  $($Matches[3])`r`n"
+        }
+        # 4) Status-Marker am Zeilenanfang als deutliche Symbole.
+        $t = $t -replace '^(\s*)\[OK\]\s*',      '$1   [ok]  '
+        $t = $t -replace '^(\s*)\[FEHLER\]\s*',  '$1  [X] FEHLER:  '
+        $t = $t -replace '^(\s*)\[WARNUNG\]\s*', '$1  [!] HINWEIS:  '
+        $t = $t -replace '^(\s*)\[HINWEIS\]\s*', '$1  [i] '
+        return $t
+    }
+
     # UI poll
     $script:UITimer = New-Object System.Windows.Threading.DispatcherTimer
     $script:UITimer.Interval = [TimeSpan]::FromMilliseconds(150)
@@ -2809,9 +2881,15 @@ function Start-Maintenance {
             try {
                 $line = $s.Lines[0]
                 $s.Lines.RemoveAt(0)
-                $e.xLogBox.AppendText("$line`r`n")
-                $e.xLogBox.ScrollToEnd()
-                $e.xStatus.Text = $line
+                # Bildschirm: menschenfreundlich aufbereitet (kann Zeilen schlucken).
+                $disp = Format-LiveLine $line
+                if ($null -ne $disp) {
+                    $e.xLogBox.AppendText("$disp`r`n")
+                    $e.xLogBox.ScrollToEnd()
+                }
+                # Status-Zeile unter dem Balken: einzeilig, ohne Zeitstempel.
+                $st = ($line -replace '^\[\d{2}:\d{2}:\d{2}\]\s?', '').Trim()
+                if ($st) { $e.xStatus.Text = $st }
             } catch { break }
         }
         $pct = $s.Progress
@@ -3573,7 +3651,8 @@ function End-Session {
 
         $msg    = "$ok erfolgreich, $warn Warnungen, $err Fehler"
         $rebootNeeded = [bool]($script:SyncHash -and $script:SyncHash.RebootRequired)
-        if ($rebootNeeded) { $msg += "`n`n>>> NEUSTART ERFORDERLICH - bitte den PC zeitnah neu starten. <<<" }
+        # Neustart-Hinweis NICHT mehr als statischer Text in der Zusammenfassung -
+        # er kommt weiter unten als eigener Ja/Nein-Vorschlag ("Jetzt neu starten?").
         $icon   = if ($err -gt 0) { "Error" } elseif ($warn -gt 0) { "Warning" } else { "Information" }
         $header = if ($err -gt 0) { "Wartung mit Fehlern beendet" }
                   elseif ($warn -gt 0) { "Wartung mit Warnungen beendet" }
@@ -3663,6 +3742,37 @@ function End-Session {
             }
         } else {
             [System.Windows.MessageBox]::Show($msg, $header, "OK", $icon) | Out-Null
+        }
+
+        # ── Neustart-Nachfrage ──────────────────────────────────────────────
+        # Liegt ein Neustart an, kommt NACH der Zusammenfassung ein eigener
+        # Ja/Nein-Dialog. Reiner Vorschlag: bei "Nein" passiert nichts (der
+        # Hinweis bleibt im Log + result-JSON erhalten). Im Automatik-Modus
+        # erscheint er nicht (dort oben bereits per return verlassen).
+        if ($rebootNeeded) {
+            $rb = [System.Windows.MessageBox]::Show(
+                "Einige Aenderungen wirken erst nach einem Neustart vollstaendig`n" +
+                "(z.B. Defender-Signaturen, Windows-Updates, SFC, Netzwerk-Reset).`n`n" +
+                "Moechtest du den PC JETZT neu starten?`n`n" +
+                "(Bei 'Nein' kannst du jederzeit spaeter selbst neu starten.)",
+                "JustUpdate - Neustart empfohlen",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question)
+            $rbMsg = if ($rb -eq [System.Windows.MessageBoxResult]::Yes) {
+                "Neustart vom Benutzer bestaetigt - PC wird in 20s neu gestartet (Abbruch: 'shutdown /a')."
+            } else {
+                "Neustart vom Benutzer verschoben (Vorschlag mit 'Nein' abgelehnt)."
+            }
+            try { [IO.File]::AppendAllText($script:LogPath, "[$(Get-Date -F 'HH:mm:ss')]   [INFO] $rbMsg`r`n", (New-Object System.Text.UTF8Encoding($false))) } catch {}
+            if ($rb -eq [System.Windows.MessageBoxResult]::Yes) {
+                # Geplanter Neustart mit 20s Karenz - Windows zeigt seine eigene
+                # Vorwarnung, der User kann mit 'shutdown /a' noch abbrechen.
+                try {
+                    Start-Process shutdown.exe -ArgumentList @('/r','/t','20','/c','JustUpdate: Neustart nach Wartung') -WindowStyle Hidden
+                } catch {
+                    try { Restart-Computer -Force } catch {}
+                }
+            }
         }
     } else {
         $e.xStatus.Text = T "Stopped"
