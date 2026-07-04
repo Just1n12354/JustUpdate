@@ -1,5 +1,20 @@
 # JustUpdate — Changelog
 
+## v2.7.3 (04.07.2026)
+
+- **NEU: Fortschritts-Heartbeat fuer die DISM-Reparatur.** `dism /restorehealth` gibt
+  - anders als Windows-Update/Winget/Treiber - keine im Log verwertbaren Fortschritts-
+  zeilen aus; der Filter fuer Fortschrittsrauschen verwarf sie. Dadurch blieb das Live-
+  Protokoll waehrend der bis zu 45 Minuten langen Komponentenspeicher-Reparatur komplett
+  still, und man konnte den Eindruck bekommen, die App haenge. Jetzt loggt ein Heartbeat -
+  wie bei Download/Installation - alle 30 Sekunden "laeuft seit X...".
+- **Haerter: 120-Sekunden-Timeout fuer die ipconfig-Aufrufe im Netzwerk-Modul.**
+  `ipconfig /flushdns | /release | /renew` wurde bisher synchron und ohne Zeitlimit
+  gelesen. In der Praxis kehren die Aufrufe sofort zurueck, aber ein blockierter
+  Netzwerk-Stack (haengender WLAN-Treiber, VPN-Client) haette das Netzwerk-Modul
+  theoretisch endlos aufhalten koennen. Die Ausgabe wird jetzt asynchron gelesen und
+  der Aufruf nach 120 s hart abgebrochen, damit die Wartung garantiert weiterlaeuft.
+
 ## v2.7.2 (15.06.2026)
 
 - **Fix: Live-Protokoll blieb waehrend der Wartung komplett leer (Regression aus

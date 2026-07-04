@@ -2562,10 +2562,18 @@ function Start-Maintenance {
                     $p.StandardOutputEncoding = $oemEnc
                     $p.StandardErrorEncoding  = $oemEnc
                     $pr = [System.Diagnostics.Process]::Start($p)
-                    $so = $pr.StandardOutput.ReadToEnd()
-                    $se = $pr.StandardError.ReadToEnd()
-                    $pr.WaitForExit()
-                    return @{ Out = ($so + $se) -split "`r?`n"; Exit = $pr.ExitCode }
+                    # Async lesen + 120s-Hardtimeout: ipconfig kehrt praktisch immer sofort zurueck,
+                    # aber ein blockierter Netzwerk-Stack (haengender WLAN-Treiber, VPN-Client) darf
+                    # die Wartung nicht endlos aufhalten. ReadToEnd() wuerde bei so einem Haenger
+                    # selbst blockieren - darum ReadToEndAsync(), damit WaitForExit(timeout) greift.
+                    $soTask = $pr.StandardOutput.ReadToEndAsync()
+                    $seTask = $pr.StandardError.ReadToEndAsync()
+                    if ($pr.WaitForExit(120000)) {
+                        return @{ Out = ($soTask.Result + $seTask.Result) -split "`r?`n"; Exit = $pr.ExitCode }
+                    }
+                    # Timeout: Prozessbaum hart beenden (gleiche Methode wie Invoke-MonitoredProcess).
+                    try { Start-Process taskkill.exe -ArgumentList "/PID $($pr.Id) /T /F" -WindowStyle Hidden -Wait -ErrorAction Stop } catch { try { $pr.Kill() } catch {} }
+                    return @{ Out = @("[Timeout] $exe $argString nach 120s abgebrochen"); Exit = -1 }
                 }
 
                 L "  Schritt 1/5: DNS-Cache leeren..."
