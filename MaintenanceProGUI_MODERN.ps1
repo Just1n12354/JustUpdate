@@ -2473,9 +2473,13 @@ function Start-Maintenance {
                 # 45-Min-Timeout: DISM /restorehealth haengt sich klassisch auf, wenn
                 # der Komponentenspeicher beschaedigt ist oder Windows Update nicht
                 # erreichbar ist - genau die Ursache fuer den 145-Min-Hang.
+                # Heartbeat: DISM gibt KEINE Progress-Zeilen aus (anders als WUA/winget) —
+                # ohne Heartbeat sieht der User 45 Min lang absolut nichts.
+                $dismHb = Start-Heartbeat "    DISM-Repair " 30
                 $dismRun = Invoke-MonitoredProcess -FileName "dism.exe" `
                              -Arguments "/online /cleanup-image /restorehealth" `
                              -TimeoutSec 2700 -OutEncoding $oemEnc
+                Stop-Heartbeat $dismHb
                 $dismExit     = $dismRun.ExitCode
                 $dismTimedOut = $dismRun.TimedOut
 
