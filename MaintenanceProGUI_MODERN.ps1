@@ -1,4 +1,4 @@
-# Version: 2.7.2
+# Version: 2.7.3
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.2' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.3' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
