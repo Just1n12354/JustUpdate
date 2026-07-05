@@ -125,10 +125,17 @@ if ($isExe) {
 # WICHTIG: Vor Self-Update-Neustart und EXE-Migration wird der Mutex
 # explizit freigegeben, sonst weist die alte Instanz die neue ab (Race).
 # =====================================================================
-$script:JUMutex = New-Object System.Threading.Mutex($false, "Global\JustUpdate_SingleInstance")
-$juGotMutex = $false
-try { $juGotMutex = $script:JUMutex.WaitOne(0) }
+# FAIL-OPEN: Der Instanz-Schutz ist Komfort - wirft die Mutex-Erstellung
+# selbst (exotische ACL-/Namespace-Faelle), darf das den Start NIE verhindern.
+# Nur ein sauberes WaitOne(0)=false bedeutet "andere Instanz laeuft wirklich".
+$script:JUMutex = $null
+$juGotMutex = $true
+try {
+    $script:JUMutex = New-Object System.Threading.Mutex($false, "Global\JustUpdate_SingleInstance")
+    $juGotMutex = $script:JUMutex.WaitOne(0)
+}
 catch [System.Threading.AbandonedMutexException] { $juGotMutex = $true }   # Vorinstanz abgestuerzt -> Mutex uebernehmen
+catch { $juGotMutex = $true }
 if (-not $juGotMutex) {
     if ($script:AutoMode) {
         # Geplanter Lauf trifft auf offene Instanz: still uebersprungen.
