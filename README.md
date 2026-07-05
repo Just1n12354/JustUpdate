@@ -43,9 +43,9 @@ MaintenanceProGUI_MODERN.ps1 -Auto
 ```
 
 Oder setze die Umgebungsvariable `JUSTUPDATE_AUTO=1`. Im Automatik-Modus:
-- Keine GUI, keine Dialoge
+- Das Fenster öffnet sich (Live-Protokoll bleibt sichtbar), aber es gibt **keine Dialoge und keine Rückfragen** — die Wartung startet selbst, läuft durch und schliesst das Fenster am Ende
 - Keine laufenden Programme werden geschlossen
-- Exit-Code: `0` = OK, `1` = Warnungen, `2` = Fehler
+- Exit-Code: `0` = OK, `1` = Warnungen, `2` = Fehler, `3` = übersprungen (JustUpdate lief bereits)
 - Ergebnis wird als `result_<timestamp>.json` im Log-Ordner gespeichert
 
 ### Zeitplan

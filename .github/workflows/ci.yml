@@ -1,0 +1,33 @@
+# CI-Gate fuer den Update-Kanal.
+# main ist der LIVE-Verteilkanal: Self-Update auf den Kundengeraeten laedt
+# MaintenanceProGUI_MODERN.ps1 direkt von main. Dieser Workflow verhindert,
+# dass ein kaputter Commit (Syntaxfehler, vergessener Versions-Bump,
+# Parser-Regression) die Kunden erreicht.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bewusst Windows PowerShell 5.1 ("powershell", nicht "pwsh"):
+      # das ist die Umgebung, in der das Skript beim Kunden laeuft.
+      - name: Skript-Checks (Parse, Versionen, Parser-Tests)
+        shell: powershell
+        run: .\tests\checks.ps1
+
+      # Nicht blockierend: liefert Hinweise, bricht den Build aber nicht ab.
+      # Auf blockierend stellen, sobald die Bestandsfindings abgearbeitet sind.
+      - name: PSScriptAnalyzer (informativ)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Invoke-ScriptAnalyzer -Path .\MaintenanceProGUI_MODERN.ps1 -Severity Error,Warning |
+            Format-Table RuleName, Severity, Line, Message -AutoSize | Out-String -Width 300

@@ -1,5 +1,44 @@
 # JustUpdate — Changelog
 
+## v2.7.4 (05.07.2026)
+
+- **SICHERHEIT: Der aggressive Prozess-Kill im Winget-Retry ist jetzt eingezaeunt.**
+  Scheiterte ein App-Update mit "Datei in Verwendung", wurden bisher alle Prozesse
+  beendet, deren EXE-Pfad ein Wort aus dem Paketnamen enthielt — bei einem Paket wie
+  "Microsoft Edge" haette das Keyword "Microsoft" JEDEN Prozess unter
+  `C:\Program Files\Microsoft ...` getroffen (z.B. Word mit ungespeichertem Dokument)
+  und ueber den DisplayName-Match sogar den Defender-Dienst gestoppt. Jetzt:
+  Stopword-Liste fuer generische Woerter (Microsoft, Windows, Update, ...), Prozesse
+  unter `C:\Windows` und der eigene Prozess sind grundsaetzlich tabu, und Services
+  werden nur noch ueber den technischen Namen gematcht, nie ueber den DisplayName.
+- **NEU: Single-Instance-Schutz.** Ein Doppelklick zu viel (oder der Zeitplan waehrend
+  einer offenen GUI) startete bisher eine zweite Wartung parallel — DISM/SFC doppelt,
+  Winget-Installer blockieren sich gegenseitig. Jetzt haelt ein globaler Mutex die
+  zweite Instanz auf: kurze Meldung, sauberer Exit. Im Automatik-Modus meldet der
+  uebersprungene Lauf Exit-Code 3 (statt faelschlich 0/1/2). Vor Self-Update-Neustart
+  und EXE-Migration wird der Mutex explizit freigegeben, damit die Folge-Instanz
+  nicht abgewiesen wird.
+- **Fix: Apps mit eigenem Auto-Updater erzeugten falsche Warnungen.** Meldet winget
+  "Fuer die installierte Version wurde kein anwendbares Upgrade gefunden" (typisch
+  Edge/Teams, die sich selbst aktualisieren), fiel die Zeile durch alle Parser-Zweige
+  und das Paket wurde beim naechsten "(N/M) Gefunden" faelschlich als fehlgeschlagen
+  verbucht. Zaehlt jetzt als "uebersprungen" — weder Erfolg noch Fehler.
+- **Fix: Winget-Ausgabe wird jetzt als UTF-8 dekodiert.** Der Kommentar versprach es
+  laengst, die drei `Invoke-MonitoredProcess`-Aufrufe (source update, upgrade --all,
+  Retry) lasen aber ohne Encoding-Override — Umlaute in Paketnamen wurden im Log zu
+  Ersatzzeichen.
+- **Fix: Store-Service-Registrierung ohne `RegisterServiceWithAU`.** Beim
+  Microsoft-Update-Service (Modul 3/4) wird Flag 4 bewusst weggelassen, damit der
+  Auto-Updater des Geraets nicht dauerhaft umgehaengt wird — die Store-Registrierung
+  nutzte aber Flag 7 (inkl. Flag 4). Jetzt konsistent Flag 3.
+- **Haerter: Live-Protokoll verliert keine Zeilen mehr, wenn die Aufbereitung wirft.**
+  `Format-LiveLine` (Regressions-Quelle von v2.7.2) ist jetzt einzeln abgesichert:
+  schlaegt die Aufbereitung fehl, erscheint die Zeile roh statt gar nicht.
+- **NEU: CI-Gate fuer den Update-Kanal.** `main` ist der Live-Verteilkanal (Self-Update
+  laedt direkt von dort). Eine GitHub Action prueft jetzt bei jedem Push: Skript
+  parsebar, Versions-Angaben konsistent (Header, Fallback, Changelog), Parser-Checks
+  (`tests/checks.ps1`). Ein kaputter Commit erreicht so keine Kunden mehr.
+
 ## v2.7.3 (04.07.2026)
 
 - **NEU: Fortschritts-Heartbeat fuer die DISM-Reparatur.** `dism /restorehealth` gibt

@@ -1,4 +1,4 @@
-# Version: 2.7.3
+# Version: 2.7.4
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.3' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.4' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -113,6 +113,40 @@ if ($isExe) {
     if ($script:AutoMode) { $elevArgs += " -Auto" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $elevArgs
     exit
+}
+
+# =====================================================================
+# SINGLE-INSTANCE-SCHUTZ: Ein Doppelklick zu viel (oder der Zeitplan
+# waehrend einer offenen GUI) startete bisher eine ZWEITE Wartung parallel -
+# DISM/SFC doppelt, Winget-Installer blockieren sich gegenseitig, zwei Logs.
+# Benannter Global-Mutex; die zweite Instanz meldet sich kurz und beendet
+# sich. Erst NACH der Selbst-Elevation anlegen (der nicht-elevierte Prozess
+# beendet sich sofort wieder und darf den Mutex nicht besetzen).
+# WICHTIG: Vor Self-Update-Neustart und EXE-Migration wird der Mutex
+# explizit freigegeben, sonst weist die alte Instanz die neue ab (Race).
+# =====================================================================
+$script:JUMutex = New-Object System.Threading.Mutex($false, "Global\JustUpdate_SingleInstance")
+$juGotMutex = $false
+try { $juGotMutex = $script:JUMutex.WaitOne(0) }
+catch [System.Threading.AbandonedMutexException] { $juGotMutex = $true }   # Vorinstanz abgestuerzt -> Mutex uebernehmen
+if (-not $juGotMutex) {
+    if ($script:AutoMode) {
+        # Geplanter Lauf trifft auf offene Instanz: still uebersprungen.
+        # Exit 3 = "nicht gelaufen, Instanz aktiv" (0/1/2 sind Wartungs-Ergebnisse).
+        exit 3
+    }
+    Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue
+    [System.Windows.MessageBox]::Show(
+        "JustUpdate laeuft bereits.`n`nBitte das offene Fenster verwenden - eine zweite Wartung gleichzeitig wuerde sich mit der ersten in die Quere kommen.",
+        "JustUpdate", [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Information) | Out-Null
+    exit
+}
+function Release-JUMutex {
+    # Vor einem geplanten Prozess-Neustart (Self-Update/EXE-Migration) aufrufen.
+    try { $script:JUMutex.ReleaseMutex() } catch {}
+    try { $script:JUMutex.Dispose() } catch {}
+    $script:JUMutex = $null
 }
 
 # =====================================================================
@@ -212,6 +246,7 @@ if (-not $isExe -and $env:JUSTUPDATE_NO_SELFUPDATE -ne "1" -and -not $script:Aut
                         Copy-Item -Path $tempFile -Destination $ScriptPath -Force -ErrorAction Stop
                         Remove-Item $tempFile -ErrorAction SilentlyContinue
                         $env:JUSTUPDATE_NO_SELFUPDATE = "1"
+                        Release-JUMutex   # sonst weist diese Instanz die frisch gestartete ab
                         Start-Process powershell.exe -Verb RunAs `
                             -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$ScriptPath`""
                         exit
@@ -302,6 +337,7 @@ if (-not $isExe -and $env:JUSTUPDATE_MIGRATE_EXE -eq "1") {
                 ) | Out-File -FilePath $marker -Encoding utf8 -Force
 
                 # In die frische EXE wechseln.
+                Release-JUMutex   # sonst weist diese Instanz die frisch gestartete EXE ab
                 Start-Process -FilePath $exePath
                 exit
             }
@@ -2079,8 +2115,12 @@ function Start-Maintenance {
                     # einem Tage alten Paket-Index und uebersieht frische Updates.
                     # Kurzes Timeout, Fehler unkritisch (dann gilt der alte Index).
                     L "  Aktualisiere Winget-Quellen..."
+                    # winget emittiert UTF-8; ohne Override dekodiert .NET mit der
+                    # OEM-Codepage und Umlaute in Paketnamen werden zu Gibberish.
+                    $utf8Enc = [System.Text.UTF8Encoding]::new($false)
                     $null = Invoke-MonitoredProcess -FileName $wg `
-                              -Arguments "source update --disable-interactivity" -TimeoutSec 120
+                              -Arguments "source update --disable-interactivity" -TimeoutSec 120 `
+                              -OutEncoding $utf8Enc
 
                     L "  Pruefe verfuegbare Updates..."
                     L ""
@@ -2130,6 +2170,14 @@ function Start-Maintenance {
                                     $fail += $cur; $cur = $null
                                 }
                             }
+                            elseif ($t -match 'kein anwendbares Upgrade|No applicable upgrade|No applicable update|Aucune mise . niveau applicable') {
+                                # Installierte Version ist neuer als das winget-Manifest
+                                # (haeufig bei Apps mit eigenem Auto-Updater wie Edge/Teams).
+                                # Weder Erfolg noch Fehler - Paket unveraendert, KEIN Fail.
+                                # Vorher fiel das durch alle Branches und wurde beim naechsten
+                                # "(N/M) Gefunden" faelschlich als fehlgeschlagen verbucht.
+                                if ($cur) { $cur = $null }
+                            }
                             elseif ($t -match $okRx) {
                                 if ($cur) {
                                     if ($t -match $restartRx) { $cur.Restart = $true }
@@ -2146,7 +2194,7 @@ function Start-Maintenance {
                     # endlos blockieren.
                     $wgRun = Invoke-MonitoredProcess -FileName $wg `
                                -Arguments "upgrade --all --include-unknown --disable-interactivity --accept-source-agreements --accept-package-agreements" `
-                               -TimeoutSec 3600
+                               -TimeoutSec 3600 -OutEncoding $utf8Enc
                     $wgUpgradeOutput = $wgRun.Lines
                     $wgTimedOut = $wgRun.TimedOut
                     $exitCode   = $wgRun.ExitCode
@@ -2186,18 +2234,35 @@ function Start-Maintenance {
                         # (Auto-Update-Service, Streamlabs-Plugin, etc.) - die
                         # tauchten nicht in der Wildcard-Liste auf, blockierten
                         # den Installer aber trotzdem.
+                        # Generische Woerter, die in Paket-Namen/IDs stecken, aber als
+                        # Kill-Keyword viel zu breit treffen wuerden. Beispiel aus der
+                        # Praxis: "Microsoft Edge" -> Keyword "Microsoft" haette JEDEN
+                        # Prozess unter "C:\Program Files\Microsoft ..." gekillt (Word
+                        # mit ungespeichertem Dokument!) und Services wie den Defender
+                        # ("Microsoft Defender Antivirus Service") gestoppt.
+                        $kwStop = @(
+                            'Microsoft','Windows','Corporation','Software','Update','Updater',
+                            'Install','Installer','Installation','Application','Applications',
+                            'Program','Programs','Files','System','Service','Services','Version',
+                            'x64','x86','win32','win64','amd64','arm64','the','and','fuer','for','GmbH','Inc','LLC','Ltd'
+                        )
                         foreach ($pkg in $inUseFails) {
                             # Paket-Schluesselwort raus: "OBSProject.OBSStudio"
                             # -> Suchbegriffe "OBSStudio", "OBSProject", "OBS"
                             $kw = @()
                             if ($pkg.Name) { $kw += ($pkg.Name -split '\W+' | Where-Object { $_.Length -ge 3 }) }
                             if ($pkg.Id)   { $kw += ($pkg.Id   -split '[\W_]+' | Where-Object { $_.Length -ge 3 }) }
-                            $kw = @($kw | Sort-Object -Unique)
+                            $kw = @($kw | Where-Object { $kwStop -notcontains $_ } | Sort-Object -Unique)
                             $killed = New-Object System.Collections.Generic.List[string]
+                            $winRoot = [regex]::Escape($env:windir)
                             foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
                                 try {
+                                    # Nie: uns selbst oder irgendwas unter C:\Windows
+                                    # (System-Prozesse, PowerShell-Host, svchost & Co).
+                                    if ($p.Id -eq $PID) { continue }
                                     $path = $p.Path
                                     if (-not $path) { continue }
+                                    if ($path -match "^$winRoot\\") { continue }
                                     foreach ($k in $kw) {
                                         if ($path -match [regex]::Escape($k)) {
                                             try {
@@ -2209,13 +2274,16 @@ function Start-Maintenance {
                                     }
                                 } catch {}
                             }
-                            # Windows-Services mit passendem Namen stoppen — OBS-
+                            # Windows-Services mit passendem NAMEN stoppen — OBS-
                             # Studio installiert keinen Service standardmaessig,
                             # aber Plugins/Updater-Tools tun es manchmal.
+                            # Bewusst NUR der technische Service-Name, NICHT der
+                            # DisplayName: DisplayNames sind Marketing-Text und
+                            # matchen viel zu breit (s. Defender-Beispiel oben).
                             foreach ($k in $kw) {
                                 try {
                                     Get-Service -ErrorAction SilentlyContinue |
-                                        Where-Object { $_.Name -like "*$k*" -or $_.DisplayName -like "*$k*" } |
+                                        Where-Object { $_.Name -like "*$k*" } |
                                         ForEach-Object {
                                             try {
                                                 if ($_.Status -eq 'Running') {
@@ -2238,7 +2306,7 @@ function Start-Maintenance {
                             L "  Retry: $($pkg.Name) [$($pkg.Id)]"
                             $r = Invoke-MonitoredProcess -FileName $wg `
                                    -Arguments "upgrade --id `"$($pkg.Id)`" --exact --disable-interactivity --accept-source-agreements --accept-package-agreements" `
-                                   -TimeoutSec 1800
+                                   -TimeoutSec 1800 -OutEncoding $utf8Enc
                             $rOut = $r.Lines -join " "
                             if ($r.ExitCode -eq 0 -and ($rOut -match $okRx)) {
                                 L "    [OK] $($pkg.Name) im Retry aktualisiert"
@@ -2339,7 +2407,12 @@ function Start-Maintenance {
                     try {
                         $svcMgr = New-Object -ComObject Microsoft.Update.ServiceManager
                         $svcMgr.ClientApplicationID = "JustUpdate"
-                        $null = $svcMgr.AddService2($storeServiceId, 7, "")
+                        # Flag 3 = AllowPendingRegistration(1) + AllowOnlineRegistration(2).
+                        # Bewusst OHNE Flag 4 (RegisterServiceWithAU) - gleiches Prinzip
+                        # wie beim Microsoft-Update-Service in Modul 3/4: der Auto-
+                        # Updater des Geraets soll nicht dauerhaft umgehaengt werden.
+                        # (Bis v2.7.3 stand hier 7, also inkl. Flag 4 - inkonsistent.)
+                        $null = $svcMgr.AddService2($storeServiceId, 3, "")
                     } catch {
                         # 0x80240020 = bereits registriert, ignorieren
                     }
@@ -2899,7 +2972,11 @@ function Start-Maintenance {
                 $line = $s.Lines[0]
                 $s.Lines.RemoveAt(0)
                 # Bildschirm: menschenfreundlich aufbereitet (kann Zeilen schlucken).
-                $disp = Format-LiveLine $line
+                # Aufbereitung einzeln abgesichert: wirft Format-LiveLine (war schon
+                # einmal Regressions-Quelle, v2.7.2), zeigen wir die Zeile ROH statt
+                # sie zu verlieren - 'catch { break }' unten schluckte sonst alles.
+                $disp = $null
+                try { $disp = Format-LiveLine $line } catch { $disp = $line }
                 if ($null -ne $disp) {
                     $e.xLogBox.AppendText("$disp`r`n")
                     $e.xLogBox.ScrollToEnd()
