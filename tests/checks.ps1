@@ -82,14 +82,16 @@ if ($fnText) {
 # --- 3b) parseWg (Winget-Ausgabe-Parser) ---------------------------------
 $okRxText    = Get-AssignText '$okRx'
 $restartText = Get-AssignText '$restartRx'
+$pcRebootText = Get-AssignText '$pcRebootRx'
 $parseWgText = Get-AssignText '$parseWg'
-Check 'parseWg + Regexe im Skript gefunden' ($okRxText -and $restartText -and $parseWgText)
-if ($okRxText -and $restartText -and $parseWgText) {
+Check 'parseWg + Regexe im Skript gefunden' ($okRxText -and $restartText -and $pcRebootText -and $parseWgText)
+if ($okRxText -and $restartText -and $pcRebootText -and $parseWgText) {
     # Regexe und Scriptblock 1:1 aus dem Skript uebernehmen. parseWg greift
-    # per dynamischem Scope auf $okRx/$restartRx zu - hier genauso.
-    $okRx      = Invoke-Expression $okRxText
-    $restartRx = Invoke-Expression $restartText
-    $parseWg   = Invoke-Expression $parseWgText
+    # per dynamischem Scope auf $okRx/$restartRx/$pcRebootRx zu - hier genauso.
+    $okRx       = Invoke-Expression $okRxText
+    $restartRx  = Invoke-Expression $restartText
+    $pcRebootRx = Invoke-Expression $pcRebootText
+    $parseWg    = Invoke-Expression $parseWgText
 
     $r = & $parseWg @('(1/1) Gefunden OBS Studio [OBSProject.OBSStudio]', 'Erfolgreich installiert')
     Check 'parseWg: Erfolg zaehlt als Installed' (@($r.Installed).Count -eq 1 -and @($r.Failed).Count -eq 0)
@@ -109,6 +111,31 @@ if ($okRxText -and $restartText -and $parseWgText) {
         '(2/2) Gefunden Foo [Foo.Bar]',
         'Erfolgreich installiert')
     Check 'parseWg: "kein anwendbares Upgrade" ist KEIN Fehlschlag' (@($r.Failed).Count -eq 0 -and @($r.Installed).Count -eq 1)
+
+    # v2.7.6: Hex-Exit-Code + remove_all-Lock (beides aus echtem Kundenlog 12.07.2026)
+    $r = & $parseWg @(
+        '(1/1) Gefunden Rclone [Rclone.Rclone] Version 1.74.4',
+        'remove_all: Zugriff verweigert: "C:\Users\X\AppData\Local\Microsoft\WinGet\Packages\Rclone.Rclone_Microsoft.Winget.Source_8wekyb3d8bbwe\rclone-v1.74.3-windows-amd64"',
+        'Installation fehlgeschlagen mit Exitcode: 0x8a150003 : Fehler beim Ausfuehren des Befehls')
+    Check 'parseWg: remove_all-Lock zaehlt als Failed+InUse (Retry-Pass greift)' (@($r.Failed).Count -eq 1 -and @($r.Failed)[0].InUse)
+    Check 'parseWg: Hex-Exitcode 0x8a150003 korrekt als Int32 geparst' (@($r.Failed)[0].Exit -eq -1978335229)
+
+    $r = & $parseWg @('(1/1) Gefunden Foo [Foo.Bar]', 'Installer failed with exit code 6')
+    Check 'parseWg: dezimaler Exitcode 6 weiterhin Failed+InUse' (@($r.Failed).Count -eq 1 -and @($r.Failed)[0].InUse -and @($r.Failed)[0].Exit -eq 6)
+
+    # v2.7.6-Runde 2: MSI-3010, 1638, EN-in-use, FR-Akzente
+    $r = & $parseWg @('(1/1) Gefunden Poly Lens [Poly.PolyLens]', 'Restart your PC to finish installation.')
+    Check 'parseWg: MSI-3010 "Restart your PC" ist Installed+PcReboot (KEIN Fehlschlag)' (@($r.Installed).Count -eq 1 -and @($r.Installed)[0].PcReboot -and @($r.Failed).Count -eq 0)
+
+    $r = & $parseWg @('(1/1) Gefunden Foo [Foo.Bar]', 'Installation fehlgeschlagen mit Exitcode: 1638')
+    Check 'parseWg: Exit 1638 (andere Version installiert) ist Failed OHNE InUse' (@($r.Failed).Count -eq 1 -and -not @($r.Failed)[0].InUse)
+
+    $r = & $parseWg @('(1/1) Found Foo [Foo.Bar]', 'One or more files are being used. Exit the application and try again.', 'Installer failed with exit code 5')
+    Check 'parseWg: reale EN-in-use-Meldung ("are being used") setzt InUse' (@($r.Failed).Count -eq 1 -and @($r.Failed)[0].InUse)
+
+    $eAcc = [string][char]0x00E9   # é
+    $r = & $parseWg @(("(1/1) Trouv$eAcc Foo [Foo.Bar] Version 1.0"), ("Installation r${eAcc}ussie"))
+    Check 'parseWg: FR mit echten Akzenten (Trouve/reussie) wird erkannt' (@($r.Installed).Count -eq 1 -and @($r.Failed).Count -eq 0)
 }
 
 # --- Ergebnis ------------------------------------------------------------

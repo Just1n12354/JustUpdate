@@ -1,5 +1,79 @@
 # JustUpdate — Changelog
 
+## v2.7.6 (12.07.2026)
+
+Befunde aus dem ersten echten v2.7.5-Lauf (Log 13:20 Uhr, Winget-Modul):
+
+- **Fix: Hex-Exit-Codes von winget wurden falsch geparst.** Bei
+  `Installation fehlgeschlagen mit Exitcode: 0x8a150003` fischte der Parser aus
+  dem Hex-Wert nur die fuehrende `0` — der echte Code ging verloren. Hex wird
+  jetzt erkannt und sauber nach Int32 gewandelt.
+- **Fix: `remove_all: Zugriff verweigert` zaehlt jetzt als "in Verwendung".**
+  Beim Upgrade portabler Pakete (z.B. Rclone, das gerade als Mount/Daemon
+  laeuft) ist die alte Version von einem laufenden Prozess gelockt. Vorher:
+  sofort als Fehlschlag verbucht. Jetzt greift der Retry-Pass — passende
+  Prozesse werden beendet und das Upgrade einmal wiederholt.
+- **Log: Der Retry-Kill-Pass schreibt jetzt, WAS er beendet hat** (bzw. dass
+  kein bekannter Tray/Helper-Prozess lief). Vorher war im Log nicht
+  nachvollziehbar, ob der Kill ueberhaupt etwas traf — wichtig fuer Faelle wie
+  OBS, wo die Dateien trotz beendeter App gelockt bleiben (Game-Hook in einem
+  laufenden Spiel).
+- Neue Parser-Regressionstests in `tests/checks.ps1` fuer beide Faelle,
+  abgeleitet aus dem echten Kundenlog.
+
+Zusaetzlich aus einem Multi-Agenten-Review (Threading, Parser, WUA) vor dem Release:
+
+- **Fix (KRITISCH): Doppelstart im selben Prozess.** Der "Apps schliessen?"-Dialog
+  liess Klicks aufs Hauptfenster durch — ein Doppelklick auf START konnte zwei
+  Wartungs-Worker parallel starten (der Mutex schuetzt nur prozessuebergreifend).
+  Jetzt Reentrancy-Guard als allererste Zeile.
+- **Fix (KRITISCH): UI-Freeze beim Abbrechen.** `Pipeline.Stop()` blockierte den
+  UI-Thread, bis der laufende WUA-COM-Call (bis 30 Min) fertig war — Fenster
+  "Keine Rueckmeldung", Kunden killten den Prozess mitten im Update. Abbruch
+  nutzt jetzt `BeginStop` (asynchron); die Watchdogs beenden Kindprozesse weiter
+  binnen ~1s.
+- **Fix (KRITISCH): Neustart-Prompt von Lauf 1 traf Lauf 2.** START wurde vor den
+  Abschluss-Dialogen wieder freigegeben; startete man waehrenddessen neu, konnte
+  der Neustart-Prompt des ALTEN Laufs `shutdown /r` mitten in den neuen Lauf
+  setzen. Freigabe jetzt erst nach allen Dialogen.
+- **Fix (KRITISCH): MSI-Erfolg mit Reboot-Pflicht (3010) zaehlte als Fehlschlag.**
+  winget druckt dafuer NUR "Restart your PC to finish installation" — keine
+  "Successfully installed"-Zeile. Der Parser kannte die Meldung nicht (5. Instanz
+  dieser Bug-Klasse; betraf z.B. Zoom/Poly Lens). Zaehlt jetzt als Erfolg, setzt
+  `rebootRequired` und wird als Hinweis geloggt.
+- **Fix: Blacklist-Zaehler wurde fuer nie versuchte Treiber geloescht.** Ein beim
+  Download uebersprungener Treiber (RC3) bekam seinen Fail-Zaehler faelschlich
+  zurueckgesetzt — chronische Treiber mit Download-Flakes haetten den Threshold
+  nie erreicht. Reset jetzt nur noch fuer tatsaechlich installierte+verifizierte.
+  Dazu: uebersprungene Downloads zaehlen als offen (kein "ok" mehr trotz
+  fehlendem Treiber), Titel-Duplikate werden nur 1x gebucht, versteckte
+  Geraete-Zwillinge nicht mehr als Fehlschlag gewertet, Blacklist-Datei wird
+  atomar geschrieben (temp+rename).
+- **Fix: Exit 1638 loest keinen sinnlosen Kill+Retry mehr aus** ("andere Version
+  bereits installiert" ist kein Datei-Lock — ein Retry kann nie gelingen).
+- **Fix: EN-Windows-Erkennung.** Die realen englischen in-use-Meldungen ("are
+  being used", "is currently running") und die SFC-Pending-Meldung ("system
+  repair pending … requires reboot") matchten nicht — Retry bzw. Warn-Statt-
+  Fehler griffen auf EN-Systemen nie.
+- **Fix: Franzoesisch war komplett tot.** Alle FR-Pattern waren ohne Akzente
+  geschrieben ("Trouve" statt "Trouvé") — auf FR-Windows wurde KEIN Paket
+  erkannt und das Modul meldete faelschlich "ok". Literale jetzt mit Wildcards.
+- **Fix: DISM Exit 3010 = Erfolg mit Neustart** (dokumentiert) — wurde als
+  "[FEHLER] DISM fehlgeschlagen" gemeldet.
+- **Fix: User-Abbruch waehrend SFC/DISM** erzeugte "[FEHLER] SFC fehlgeschlagen
+  … Admin-Rechte pruefen" und startete DISM trotzdem noch. Abbruch wird jetzt
+  vor der Bewertung erkannt.
+- **Fix: Store-Status log gegen sich selbst.** "ok" obwohl nur 3 von 5 Updates
+  installiert wurden; Download-Totalausfall wurde als "nur MDM-Scan" gemeldet.
+  Gemessen wird jetzt gegen alle gefundenen Updates.
+- **Robuster: Modul-3-Treiberfilter** prueft jetzt primaer das dokumentierte
+  `IUpdate.Type=2` statt nur den undokumentierten Kategorie-Typ "Driver".
+- **Log: Winget meldet uebersprungene Pakete mit anderer Installationstechnologie**
+  (z.B. TeamSpeak 5→6) jetzt als klaren Hinweis statt nur im Roh-Output.
+- **Technisch: Die .ps1 traegt jetzt ein UTF-8-BOM** — Windows PowerShell las die
+  Datei bisher als ANSI; literale Sonderzeichen wurden zu Zeichensalat (Ursache
+  des Maximieren-Button-Bugs aus v2.7.5).
+
 ## v2.7.5 (12.07.2026)
 
 - **Fix (KRITISCH): Chronisch fehlschlagende Treiber machen den Lauf nicht mehr

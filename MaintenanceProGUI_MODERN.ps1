@@ -1,4 +1,4 @@
-# Version: 2.7.5
+﻿# Version: 2.7.6
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.5' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.6' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -1162,6 +1162,16 @@ function Close-RunningUserApps {
 }
 
 function Start-Maintenance {
+    # Bug-Fix v2.7.6 (K1): Reentrancy-Guard GANZ am Anfang. Der "Apps
+    # schliessen?"-Dialog unten ist eine MessageBox ohne Owner - ihr Message-
+    # Pump stellt Klicks aufs Hauptfenster weiter zu. Ein Doppelklick auf
+    # START konnte so ZWEI Worker im selben Prozess starten (der Global-Mutex
+    # schuetzt nur prozessUEBERgreifend); der verwaiste Worker war danach
+    # nicht mehr stoppbar, weil seine Pipeline-Referenz ueberschrieben wurde.
+    if ($script:MaintRunning) { return }
+    $script:MaintRunning = $true
+    $e.xStart.IsEnabled = $false
+
     # Vor Update-Modulen: User fragen, ob laufende Apps geschlossen werden sollen.
     # Verhindert dass Update-Installer sich an gesperrten Dateien aufhaengen.
     # Winget mit reingenommen: Hauptursache fuer file-in-use sind Tray-Apps wie
@@ -1367,8 +1377,12 @@ function Start-Maintenance {
                 foreach ($k in $bl.Keys) {
                     $obj | Add-Member -NotePropertyName $k -NotePropertyValue ([pscustomobject]$bl[$k])
                 }
-                [IO.File]::WriteAllText($script:DrvBlacklistPath, ($obj | ConvertTo-Json -Depth 5),
+                # v2.7.6: atomar schreiben (temp + rename) - ein Absturz mitten im
+                # Write hinterliess sonst korruptes JSON und ALLE Zaehler waren weg.
+                $tmp = "$($script:DrvBlacklistPath).tmp"
+                [IO.File]::WriteAllText($tmp, ($obj | ConvertTo-Json -Depth 5),
                     (New-Object System.Text.UTF8Encoding($false)))
+                Move-Item -Path $tmp -Destination $script:DrvBlacklistPath -Force
             } catch {}
         }
 
@@ -1856,8 +1870,15 @@ function Start-Maintenance {
                 # weil die in Modul 4 separat behandelt werden.
                 $result = $searcher.Search("IsInstalled=0 AND IsHidden=0")
                 $softwareUpdates = @($result.Updates | Where-Object {
+                    # v2.7.6: IUpdate.Type=2 (utDriver) ist der DOKUMENTIERTE Treiber-
+                    # Indikator; der bisherige Kategorie-Check ($cat.Type -eq "Driver")
+                    # haengt an einem undokumentierten Wert und bleibt nur als
+                    # zweite Absicherung stehen.
                     $isDriver = $false
-                    foreach ($cat in $_.Categories) { if ($cat.Type -eq "Driver") { $isDriver = $true; break } }
+                    try { if ($_.Type -eq 2) { $isDriver = $true } } catch {}
+                    if (-not $isDriver) {
+                        foreach ($cat in $_.Categories) { if ($cat.Type -eq "Driver") { $isDriver = $true; break } }
+                    }
                     -not $isDriver
                 })
 
@@ -2046,6 +2067,8 @@ function Start-Maintenance {
                     $dl.Updates = $dColl
                     $hb = Start-Heartbeat "    Treiber-Download "
                     try { $dlRes = $dl.Download() } finally { Stop-Heartbeat $hb }
+                    $drvTotal = $dColl.Count      # Gesamtzahl VOR evtl. RemoveAt (fuer ehrliche Zaehlung)
+                    $drvDlSkipped = 0             # beim Download uebersprungene Treiber (RC3)
                     if ($dlRes.ResultCode -eq 2) {
                         L "  [OK] Download abgeschlossen"
                     } elseif ($dlRes.ResultCode -eq 3) {
@@ -2058,6 +2081,7 @@ function Start-Maintenance {
                             if (-not $dColl.Item($di).IsDownloaded) {
                                 L "  [WARNUNG] Nicht heruntergeladen - uebersprungen: $($dColl.Item($di).Title)"
                                 $dColl.RemoveAt($di)
+                                $drvDlSkipped++   # v2.7.6: zaehlt unten als offen, sonst "ok" trotz fehlendem Treiber
                             }
                         }
                         if ($dColl.Count -eq 0) {
@@ -2077,7 +2101,7 @@ function Start-Maintenance {
                     $hb = Start-Heartbeat "    Treiber-Installation "
                     try { $r = $inst.Install() } finally { Stop-Heartbeat $hb }
 
-                    $drvOk = 0; $drvFail = 0
+                    $drvOk = 0; $drvFail = $drvDlSkipped   # uebersprungene Downloads zaehlen als offen (v2.7.6)
                     $reportedOk = @()  # Treiber, die WUA als OK meldet — die werden gleich verifiziert
                     $drvHardFailTitles = @()  # ResultCode 4 o.ae. — echte Install-Fehlschlaege (fuer Blacklist)
                     for ($idx = 0; $idx -lt $dColl.Count; $idx++) {
@@ -2111,6 +2135,13 @@ function Start-Maintenance {
                             $verResult = $verSearcher.Search("IsInstalled=0 AND Type='Driver'")
                             $stillPending = @()
                             foreach ($v in $verResult.Updates) {
+                                # v2.7.6: vom User VERSTECKTE Eintraege nicht als "offen"
+                                # werten. Szenario: User hat Geraete-Zwilling A (gleicher
+                                # Titel) in den Windows-Einstellungen ausgeblendet, B wird
+                                # installiert - der Re-Scan fand sonst den versteckten A
+                                # und buchte den ERFOLG von B als Fehlschlag.
+                                $vHidden = $false; try { $vHidden = [bool]$v.IsHidden } catch {}
+                                if ($vHidden) { continue }
                                 if ($reportedOk -contains $v.Title) { $stillPending += $v.Title }
                             }
                             if ($stillPending.Count -eq 0) {
@@ -2150,7 +2181,7 @@ function Start-Maintenance {
                                             $reSearcher.ServiceID       = $searcher.ServiceID
                                         }
                                         $reResult = $reSearcher.Search("IsInstalled=0 AND Type='Driver'")
-                                        $reallyPending = @($reResult.Updates | Where-Object { $stillPending -contains $_.Title } | ForEach-Object { $_.Title })
+                                        $reallyPending = @($reResult.Updates | Where-Object { ($stillPending -contains $_.Title) -and -not $_.IsHidden } | ForEach-Object { $_.Title })
                                     } catch {
                                         L "  [WARNUNG] Re-Verifikation nach pnputil fehlgeschlagen - werte haengende Treiber als offen"
                                     }
@@ -2185,9 +2216,16 @@ function Start-Maintenance {
                     try {
                         $drvUnresolved = @(@($drvHardFailTitles) + @($drvVerifyPending) | Select-Object -Unique)
                         $nowStamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+                        $processedUids = @{}
                         foreach ($d in $usableDrv) {
                             $uid = $drvIdByTitle[$d.Title]
                             if (-not $uid) { continue }
+                            # v2.7.6: Titel-Duplikate (zwei identische Geraete -> gleicher
+                            # Titel, verschiedene UpdateIDs, aber Map liefert nur EINE) nur
+                            # einmal pro Lauf buchen - sonst zaehlt ein Fehlschlag doppelt
+                            # und der Threshold ist nach 2 statt 3 Laeufen erreicht.
+                            if ($processedUids.ContainsKey($uid)) { continue }
+                            $processedUids[$uid] = $true
                             if ($drvUnresolved -contains $d.Title) {
                                 $prev = if ($drvBlacklist.ContainsKey($uid)) { [int]$drvBlacklist[$uid].FailCount } else { 0 }
                                 $newCount = $prev + 1
@@ -2195,10 +2233,14 @@ function Start-Maintenance {
                                 if ($newCount -ge $script:DrvBlacklistThreshold) {
                                     L "  [INFO] '$($d.Title)' hat $newCount Fehlversuche - wird kuenftig uebersprungen"
                                 }
-                            } elseif (-not $drvVerifyCrashed -and $drvBlacklist.ContainsKey($uid)) {
-                                # Nur bei GELUNGENER Verifikation zuruecksetzen - ist der
-                                # Re-Scan geworfen, wissen wir nicht, ob der Treiber wirklich
-                                # installiert wurde, und lassen den Zaehler wie er ist.
+                            } elseif (-not $drvVerifyCrashed -and ($reportedOk -contains $d.Title) -and $drvBlacklist.ContainsKey($uid)) {
+                                # Zuruecksetzen NUR fuer Treiber, die in diesem Lauf
+                                # tatsaechlich installiert UND verifiziert wurden
+                                # ($reportedOk). Ohne den Check wurde der Zaehler auch
+                                # fuer Treiber geloescht, die beim Download uebersprungen
+                                # wurden (RC3) und nie einen Install-Versuch sahen -
+                                # ein chronischer Treiber mit Download-Flakes haette
+                                # den Threshold so nie erreicht.
                                 [void]$drvBlacklist.Remove($uid)   # diesmal verifiziert geklappt -> Zaehler weg
                             }
                         }
@@ -2208,9 +2250,9 @@ function Start-Maintenance {
                     if ($drvFail -eq 0) {
                         Mark "Drivers" "ok" "$drvOk Treiber installiert (verifiziert)"
                     } elseif ($drvOk -gt 0) {
-                        Mark "Drivers" "warn" "$drvOk von $($dColl.Count) Treibern installiert, $drvFail haengen (siehe Optionale Updates)"
+                        Mark "Drivers" "warn" "$drvOk von $drvTotal Treibern installiert, $drvFail haengen (siehe Optionale Updates)"
                     } else {
-                        Mark "Drivers" "err" "Alle $($dColl.Count) Treiber-Updates fehlgeschlagen"
+                        Mark "Drivers" "err" "Alle $drvTotal Treiber-Updates fehlgeschlagen"
                     }
                 }
             } catch {
@@ -2287,9 +2329,20 @@ function Start-Maintenance {
                     # Frueher fiel dieser Satz durch alle Parser-Branches, das Paket blieb
                     # in $cur haengen und wurde beim naechsten "(N/M) Gefunden" faelschlich
                     # als fehlgeschlagen verbucht. Beide Phrasen zaehlen jetzt als Erfolg.
-                    $okRx = 'Successfully installed|Erfolgreich installiert|Installation reussie|Die Installation war erfolgreich|installation was successful|Restart the application to complete|Starten Sie die Anwendung neu|Redemarrez l.application'
+                    # v2.7.6: FR-Literale mit .-Wildcard statt Akzent (die Datei-
+                    # Patterns "reussie"/"Redemarrez" matchten das echte "réussie"/
+                    # "Rédemarrez" NIE - FR-Systeme meldeten faelschlich "ok" ohne
+                    # ein einziges erkanntes Paket). Neu ausserdem: die MSI-3010-
+                    # Meldung "Restart your PC to finish installation" - winget
+                    # druckt bei ERROR_SUCCESS_REBOOT_REQUIRED NUR diese Zeile
+                    # (kein "Successfully installed"!), sie fiel durch alle
+                    # Branches und Erfolge zaehlten als Fehlschlag (5. Instanz
+                    # dieser Bug-Klasse; betraf z.B. Zoom/Poly Lens).
+                    $okRx = 'Successfully installed|Erfolgreich installiert|Installation r.ussie|Die Installation war erfolgreich|installation was successful|Restart the application to complete|Starten Sie die Anwendung neu|Red.marrez l.application|Restart your PC to finish|Starten Sie (Ihren|den) PC neu|Red.marrez (votre|le) PC'
                     # Untermenge von $okRx: erfolgreich, aber App-Neustart noch offen.
-                    $restartRx = 'Restart the application to complete|Starten Sie die Anwendung neu|Redemarrez l.application'
+                    $restartRx = 'Restart the application to complete|Starten Sie die Anwendung neu|Red.marrez l.application'
+                    # Untermenge von $okRx: erfolgreich, aber PC-NEUSTART noetig (MSI 3010).
+                    $pcRebootRx = 'Restart your PC to finish|Starten Sie (Ihren|den) PC neu|Red.marrez (votre|le) PC'
 
                     # Inline-Parser: Output-Stream auswerten und pro Paket Status sammeln.
                     # Wichtig fuer in-use-Retry: wir muessen wissen WELCHE Apps wegen
@@ -2297,20 +2350,45 @@ function Start-Maintenance {
                     $parseWg = {
                         param([string[]]$Lines)
                         $fail = @(); $ok = @(); $cur = $null
-                        $inUseRx = 'einer anderen Anwendung verwendet|in use by another|currently being used|being used by another'
+                        # v2.7.6: "remove_all: Zugriff verweigert" beim Upgrade portabler
+                        # Pakete (z.B. Rclone laeuft gerade als Mount/Daemon) bedeutet:
+                        # die ALTE Version ist von einem laufenden Prozess gelockt ->
+                        # wie in-use behandeln, damit der Retry-Pass (Prozess-Kill +
+                        # erneuter Versuch) eine Chance bekommt statt sofort aufzugeben.
+                        # v2.7.6: die REALEN EN-Meldungen aus winget.resw ergaenzt
+                        # ("are being used", "is currently running", "currently in
+                        # use") - die alten EN-Alternativen matchten keine davon,
+                        # auf EN-Windows hing der Retry allein an der Exit-Code-
+                        # Liste. DE-Ergaenzung: "Dateien werden verwendet" (FileInUse).
+                        $inUseRx = 'einer anderen Anwendung verwendet|in use by another|currently being used|being used by another|are being used|is currently running|currently in use|Dateien werden verwendet|^remove_all:.*(Zugriff verweigert|Access is denied|Acc.s refus)'
                         foreach ($raw in $Lines) {
                             $t = "$raw".Trim()
-                            if ($t -match '^\(\d+/\d+\)\s+(?:Gefunden|Found|Trouve)\s+(.+?)\s+\[([^\]]+)\]') {
+                            if ($t -match '^\(\d+/\d+\)\s+(?:Gefunden|Found|Trouv.)\s+(.+?)\s+\[([^\]]+)\]') {
                                 if ($cur) { $fail += $cur }
-                                $cur = @{ Name = $Matches[1].Trim(); Id = $Matches[2].Trim(); Exit = $null; InUse = $false; Restart = $false }
+                                $cur = @{ Name = $Matches[1].Trim(); Id = $Matches[2].Trim(); Exit = $null; InUse = $false; Restart = $false; PcReboot = $false }
                             }
                             elseif ($t -match $inUseRx) {
                                 if ($cur) { $cur.InUse = $true }
                             }
-                            elseif ($t -match '(?:Installation fehlgeschlagen mit Exitcode|Installer failed with exit code|Installation echouee avec le code de sortie)\D*(-?\d+)') {
+                            elseif ($t -match '(?:Installation fehlgeschlagen mit Exitcode|Installer failed with exit code|Installation echouee avec le code de sortie)\D*?(0x[0-9a-fA-F]+|-?\d+)') {
                                 if ($cur) {
-                                    $cur.Exit = [int]$Matches[1]
-                                    if ($cur.Exit -in 1603,6,1618,1638) { $cur.InUse = $true }
+                                    # v2.7.6: winget druckt manche Exit-Codes HEX ("0x8a150003").
+                                    # Der alte \D*(-?\d+)-Capture fischte daraus nur die
+                                    # fuehrende "0" - der echte Code ging verloren. Hex
+                                    # erkennen und sauber nach Int32 (signed) wandeln.
+                                    $exRaw = $Matches[1]
+                                    if ($exRaw -match '^0x') {
+                                        $exVal = [Convert]::ToInt64($exRaw.Substring(2), 16)
+                                        if ($exVal -gt 2147483647) { $exVal -= 4294967296 }
+                                        $cur.Exit = [int]$exVal
+                                    } else {
+                                        $cur.Exit = [int]$exRaw
+                                    }
+                                    # v2.7.6: 1638 RAUS aus der in-use-Liste. MSI 1638 =
+                                    # "andere Version bereits installiert" - kein Datei-
+                                    # Lock, ein Retry kann NIE gelingen. Vorher: sinnlose
+                                    # Prozess-/Service-Kills + garantiert erneut 1638.
+                                    if ($cur.Exit -in 1603,6,1618) { $cur.InUse = $true }
                                     $fail += $cur; $cur = $null
                                 }
                             }
@@ -2325,6 +2403,7 @@ function Start-Maintenance {
                             elseif ($t -match $okRx) {
                                 if ($cur) {
                                     if ($t -match $restartRx) { $cur.Restart = $true }
+                                    if ($t -match $pcRebootRx) { $cur.PcReboot = $true }
                                     $ok += $cur; $cur = $null
                                 }
                             }
@@ -2364,11 +2443,22 @@ function Start-Maintenance {
                         # via -like (z.B. 'obs*' fuer alle OBS-Helper). Liste kommt
                         # aus $script:TrayBlockers (via $sync) - EINE Quelle.
                         $retryBlockers = @($sync.TrayBlockers)
+                        $retryKilled = New-Object System.Collections.Generic.List[string]
                         Get-Process -ErrorAction SilentlyContinue | Where-Object {
                             $pn = $_.ProcessName
                             (@($retryBlockers | Where-Object { $pn -like $_ }).Count -gt 0)
                         } | ForEach-Object {
-                            try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch {}
+                            try {
+                                Stop-Process -Id $_.Id -Force -ErrorAction Stop
+                                [void]$retryKilled.Add($_.ProcessName)
+                            } catch {}
+                        }
+                        # v2.7.6: Sichtbar machen WAS beendet wurde - vorher war im Log
+                        # nicht nachvollziehbar, ob der Kill-Pass ueberhaupt was traf.
+                        if ($retryKilled.Count -gt 0) {
+                            L "    Beendet: $(@($retryKilled | Sort-Object -Unique) -join ', ')"
+                        } else {
+                            L "    (kein bekannter Tray/Helper-Prozess lief)"
                         }
 
                         # AGGRESSIVER 2. PASS: pro fehlgeschlagenes Paket auch
@@ -2454,6 +2544,7 @@ function Start-Maintenance {
                             $rOut = $r.Lines -join " "
                             if ($r.ExitCode -eq 0 -and ($rOut -match $okRx)) {
                                 L "    [OK] $($pkg.Name) im Retry aktualisiert"
+                                if ($rOut -match $pcRebootRx) { $sync.RebootRequired = $true }
                                 $retryInstalled += $pkg
                             } else {
                                 L "    [WARNUNG] $($pkg.Name) auch im Retry fehlgeschlagen (Exit $($r.ExitCode))"
@@ -2476,6 +2567,21 @@ function Start-Maintenance {
                     if ($restartNeeded.Count -gt 0) {
                         $rsNames = ($restartNeeded | ForEach-Object { $_.Name }) -join ", "
                         L "  [HINWEIS] $($restartNeeded.Count) App(s) aktualisiert - Neustart der App schliesst das Upgrade ab: $rsNames"
+                    }
+                    # v2.7.6: MSI-3010-Updates (erfolgreich, PC-Neustart noetig) melden
+                    # + RebootRequired setzen, damit die Neustart-Frage am Ende kommt.
+                    $pcRebootApps = @($parsed.Installed | Where-Object { $_.PcReboot })
+                    if ($pcRebootApps.Count -gt 0) {
+                        $sync.RebootRequired = $true
+                        L "  [HINWEIS] $($pcRebootApps.Count) App(s) aktualisiert - PC-NEUSTART schliesst das Upgrade ab: $(($pcRebootApps | ForEach-Object { $_.Name }) -join ', ')"
+                    }
+                    # v2.7.6: winget ueberspringt Pakete, deren neue Version eine andere
+                    # Installationstechnologie nutzt (z.B. TeamSpeak 5 -> 6). Vorher
+                    # stand das nur versteckt im Roh-Output - der User sah "7 verfuegbar,
+                    # 2 OK, 2 Fehler" und wunderte sich ueber den Rest.
+                    if ($combined -match 'andere Installationstechnologie|different installer technology|technologie d.installation') {
+                        L "  [HINWEIS] Mindestens 1 App uebersprungen: neue Version nutzt eine andere"
+                        L "            Installationstechnologie - bitte einmal manuell deinstallieren und neu installieren."
                     }
                     if ($wgTimedOut) {
                         L "  [WARNUNG] App-Updates nach 60 Min ohne Reaktion abgebrochen"
@@ -2612,7 +2718,10 @@ function Start-Maintenance {
                                     L "      [FEHLER] $($storeInst.Item($k).Title) (Code $($r.ResultCode))"
                                 }
                             }
-                            if ($installedCount -eq $storeInst.Count) { $storeOk = $true }
+                            # v2.7.6: gegen ALLE gefundenen Updates messen, nicht nur die
+                            # heruntergeladenen - sonst "ok" obwohl Downloads fehlten
+                            # (Log sagte ehrlich "3 von 5", Status widersprach sich selbst).
+                            if ($installedCount -eq $availableCount) { $storeOk = $true }
                         }
                     }
                 } catch {
@@ -2628,6 +2737,12 @@ function Start-Maintenance {
                     Mark "Store" "ok" "alle Store-Apps aktuell"
                 } elseif ($installedCount -gt 0) {
                     Mark "Store" "warn" "$installedCount von $availableCount installiert"
+                } elseif ($availableCount -gt 0) {
+                    # v2.7.6: Updates gefunden, aber keins installiert (Download-/
+                    # Install-Totalausfall) - vorher fiel das faelschlich auf
+                    # "nur MDM-Scan im Hintergrund".
+                    L "  [WARNUNG] $availableCount Store-Update(s) gefunden, keines installiert"
+                    Mark "Store" "warn" "0 von $availableCount installiert (Download/Installation fehlgeschlagen)"
                 } elseif ($mdmOk) {
                     L "  [WARNUNG] WUA-Store-Pfad lieferte nichts - MDM-Scan laeuft asynchron weiter"
                     Mark "Store" "warn" "nur MDM-Scan im Hintergrund"
@@ -2663,11 +2778,19 @@ function Start-Maintenance {
                             -TimeoutSec 1800 -OutEncoding ([System.Text.Encoding]::Unicode)
                 $sfcExit     = $sfcRun.ExitCode
                 $sfcTimedOut = $sfcRun.TimedOut
+                # v2.7.6: User-Abbruch beendet sfc.exe via Watchdog - der Exit-Code
+                # ist dann ein Abbruch-Artefakt (taskkill), kein SFC-Fehler. Vorher
+                # wurde "[FEHLER] SFC fehlgeschlagen" geloggt, DISM lief trotzdem
+                # noch an und das Modul endete auf "err - Admin-Rechte pruefen".
+                if (IsStopped) { $sync.Done = $true; return }
                 # Pending-Reboot wird von sfc.exe mit Exit-Code 1 + Meldung "Systemreparatur aus" /
                 # "Neustart erfordert" / "pending system repair" gemeldet. Das ist kein Fehler — SFC
                 # konnte legitim nicht laufen, weil ein vorheriger CBS-Vorgang noch nicht durch ist.
                 $sfcCombined = ($sfcRun.Lines -join " ")
-                $sfcPending = (-not $sfcTimedOut) -and ($sfcExit -ne 0) -and ($sfcCombined -match 'Systemreparatur aus|Neustart erfordert|pending system repair|requires a restart')
+                # v2.7.6: EN-Varianten ergaenzt - die reale EN-Meldung lautet
+                # "There is a system repair pending which requires reboot" (andere
+                # Wortreihenfolge als das alte Pattern, "reboot" statt "restart").
+                $sfcPending = (-not $sfcTimedOut) -and ($sfcExit -ne 0) -and ($sfcCombined -match 'Systemreparatur aus|Neustart erfordert|pending system repair|system repair pending|requires a restart|requires reboot')
                 $sfcOk = (-not $sfcTimedOut) -and ($sfcExit -eq 0)
                 if ($sfcOk) {
                     L "  [OK] SFC abgeschlossen"
@@ -2717,7 +2840,16 @@ function Start-Maintenance {
                     $dismTimedOut = $dismRun.TimedOut
                 }
 
-                $dismOk = (-not $dismTimedOut) -and ($dismExit -eq 0)
+                # v2.7.6: User-Abbruch waehrend DISM nicht als DISM-Fehler bewerten.
+                if (IsStopped) { $sync.Done = $true; return }
+
+                # v2.7.6: Exit 3010 = dokumentierter DISM-Erfolg mit ausstehendem
+                # Neustart - vorher als "[FEHLER] DISM fehlgeschlagen (3010)" gemeldet.
+                $dismOk = (-not $dismTimedOut) -and ($dismExit -eq 0 -or $dismExit -eq 3010)
+                if ($dismExit -eq 3010) {
+                    $sync.RebootRequired = $true
+                    L "  [HINWEIS] DISM erfolgreich - PC-Neustart zum Abschliessen noetig (Exit 3010)"
+                }
                 if ($dismOk) {
                     L "  [OK] DISM abgeschlossen"
                 } elseif ($dismTimedOut) {
@@ -3824,9 +3956,20 @@ function End-Session {
     if ($script:UITimer)    { $script:UITimer.Stop() }
     if ($script:ClockTimer) { $script:ClockTimer.Stop() }
     if (-not $completed -and $script:SyncHash) { $script:SyncHash.Stop = $true }
-    if ($script:Pipeline) { try { $script:Pipeline.Stop() } catch {}; try { $script:Pipeline.Dispose() } catch {} }
-    if ($script:Runspace)  { try { $script:Runspace.Close() } catch {} }
-    $e.xStart.IsEnabled = $true
+    # Bug-Fix v2.7.6 (K2): Beim ABBRUCH nicht synchron stoppen. Stop()/
+    # Dispose()/Close() warten, bis die Pipeline einen Checkpoint erreicht -
+    # ein laufender WUA-COM-Call (Download()/Install(), bis zu 30 Min) blockte
+    # damit den UI-Thread: Fenster "Keine Rueckmeldung", Kunde killt den
+    # Prozess mitten in der Update-Installation. BeginStop kehrt sofort
+    # zurueck; $sync.Stop laesst die Watchdogs laufende Kindprozesse binnen
+    # ~1s beenden. Bewusst KEIN sofortiges Dispose/Close im Abbruch-Pfad
+    # (beide stoppen ebenfalls synchron) - das Prozessende raeumt auf.
+    if ($completed) {
+        if ($script:Pipeline) { try { $script:Pipeline.Stop() } catch {}; try { $script:Pipeline.Dispose() } catch {} }
+        if ($script:Runspace)  { try { $script:Runspace.Close() } catch {} }
+    } else {
+        if ($script:Pipeline) { try { [void]$script:Pipeline.BeginStop($null, $null) } catch {} }
+    }
     $e.xStop.IsEnabled  = $false
     if ($completed) {
         $e.xStatus.Text = T "Done"
@@ -4037,6 +4180,13 @@ function End-Session {
     } else {
         $e.xStatus.Text = T "Stopped"
     }
+    # Bug-Fix v2.7.6 (K3): START erst wieder freigeben, wenn ALLE Abschluss-
+    # Dialoge (Zusammenfassung, Neustart-Frage) durch sind. Vorher stand die
+    # Freigabe VOR den ownerlosen MessageBoxen - waehrend die offen waren,
+    # konnte ein neuer Lauf starten und der Neustart-Prompt von Lauf 1 setzte
+    # dann 'shutdown /r' mitten in Lauf 2 ab.
+    $script:MaintRunning = $false
+    $e.xStart.IsEnabled = $true
 }
 
 # =====================================================================
