@@ -1,4 +1,4 @@
-# Version: 2.7.4
+# Version: 2.7.5
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch
@@ -45,7 +45,7 @@ if ($isExe) {
         if ((Get-Content $ScriptPath -TotalCount 1) -match '#\s*Version:\s*([\d\.]+)') { $script:JUVersion = $Matches[1] }
     } catch {}
 }
-if (-not $script:JUVersion) { $script:JUVersion = '2.7.4' }   # letzter Fallback statt "?"
+if (-not $script:JUVersion) { $script:JUVersion = '2.7.5' }   # letzter Fallback statt "?"
 
 # =====================================================================
 # Changelog-Fenster (scrollbar). Wird beim Self-Update gezeigt: "Was ist
@@ -375,10 +375,15 @@ try {
     $LogDir = Join-Path $env:APPDATA "JustUpdate\logs"
     if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 }
-$script:LogPath = Join-Path $LogDir ("Maintenance_{0}_v{1}.log" -f (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"), $script:JUVersion)
-# Metadaten-Kopf in die neue Logdatei schreiben — fuer den Support sofort
-# sichtbar welche Version, welcher Host, wann gelaufen.
-$logHeader = @"
+# Legt eine frische Logdatei (Zeitstempel im Namen) an und schreibt den
+# Metadaten-Kopf - fuer den Support sofort sichtbar welche Version, welcher
+# Host, wann gelaufen. Als Funktion (v2.7.5), weil sie beim App-Start UND vor
+# jedem weiteren Wartungslauf derselben Sitzung gebraucht wird: vorher haengte
+# Lauf 2 sein Log an die Datei von Lauf 1 an und ueberschrieb dessen
+# result_*.json (der JSON-Name leitet sich aus dem Log-Namen ab).
+function New-JULogFile {
+    $script:LogPath = Join-Path $LogDir ("Maintenance_{0}_v{1}.log" -f (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"), $script:JUVersion)
+    $logHeader = @"
 =================================================
 JustUpdate Logdatei
 =================================================
@@ -391,7 +396,9 @@ Log-Datei:  $script:LogPath
 =================================================
 
 "@
-$logHeader | Out-File -FilePath $script:LogPath -Encoding utf8
+    $logHeader | Out-File -FilePath $script:LogPath -Encoding utf8
+}
+New-JULogFile
 
 # Log-Rotation: max 10 Logs behalten, aeltere loeschen
 try {
@@ -567,7 +574,7 @@ function T([string]$k) { return $script:TR[$script:Lang][$k] }
                 </StackPanel>
                 <DockPanel Grid.Column="1" LastChildFill="False">
                     <Button x:Name="xClose" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="X" FontSize="12"/>
-                    <Button x:Name="xMax" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="☐" FontSize="12"/>
+                    <Button x:Name="xMax" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="&#x2610;" FontSize="12"/>
                     <Button x:Name="xMin" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="_" FontSize="14"/>
                     <Button x:Name="xInfo" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="i" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Acc}" Margin="0,0,4,0"/>
                     <Button x:Name="xPatch" DockPanel.Dock="Right" Style="{StaticResource WinBtn}" Content="?" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Fg}" Margin="0,0,4,0" ToolTip="Patch-Notes / Versions-Historie"/>
@@ -1004,10 +1011,14 @@ function Reset-AllIcons {
 # =====================================================================
 # INIT
 # =====================================================================
-Update-UI
-# Gespeicherte Modul-Auswahl + Sprache wiederherstellen (settings.json).
-# Nach Update-UI, damit ein Sprach-Wechsel die Texte gleich mit umstellt.
+# Gespeicherte Modul-Auswahl + Sprache wiederherstellen (settings.json) -
+# und zwar VOR Update-UI (Bug-Fix v2.7.5): der SelectionChanged-Handler von
+# xLang ist an dieser Stelle noch nicht registriert, das Setzen von
+# SelectedItem loest also KEIN Update-UI aus. Lief Update-UI zuerst (wie bis
+# v2.7.4), blieben die UI-Texte nach einem Neustart auf Deutsch, obwohl die
+# Sprach-ComboBox die gespeicherte Sprache (z.B. English) anzeigte.
 Restore-JUSettings
+Update-UI
 
 try {
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
@@ -1159,6 +1170,11 @@ function Start-Maintenance {
     # Lauf garantiert mit dem, was der User zuletzt eingestellt hat.
     Save-JUSettings
 
+    # Bug-Fix v2.7.5: Jeder Wartungslauf bekommt seine EIGENE Logdatei. Beim
+    # zweiten Start in derselben Sitzung haengte das Log vorher an Lauf 1 an
+    # und das result_*.json von Lauf 1 wurde ueberschrieben (gleicher Name).
+    if ($script:SyncHash) { New-JULogFile }
+
     $needsClose = ([bool]$e.xTglWinUpdate.IsChecked) -or `
                   ([bool]$e.xTglStore.IsChecked) -or `
                   ([bool]$e.xTglWinget.IsChecked)
@@ -1301,7 +1317,7 @@ function Start-Maintenance {
         function Finish-Module {
             if (-not $script:CurModule -or -not $script:CurModuleT0) { return }
             $secs = [int]((Get-Date) - $script:CurModuleT0).TotalSeconds
-            $m2 = [int]($secs / 60); $s2 = $secs % 60
+            $m2 = [int][Math]::Floor($secs / 60); $s2 = $secs % 60
             $dTxt = if ($m2 -gt 0) { "${m2}m ${s2}s" } else { "${s2}s" }
             L "  (Modul-Dauer: $dTxt)"
             try {
@@ -1310,6 +1326,50 @@ function Start-Maintenance {
                 }
             } catch {}
             $script:CurModule = $null
+        }
+
+        # =====================================================================
+        # TREIBER-BLACKLIST (Bug-Fix v2.7.5): chronisch fehlschlagende Treiber
+        # Manche Microsoft-Update-Katalog-Eintraege (klassisch: der superseded
+        # HP-USB-Treiber von 2018) bietet Windows Update dem PC endlos an, obwohl
+        # der In-Box-Treiber neuer und aktiv ist. WUA meldet Install=OK, ein
+        # Re-Scan findet ihn aber weiter offen -> der Lauf ist strukturell IMMER
+        # "error", egal wie sauber die anderen Module laufen. Nach
+        # $DrvBlacklistThreshold Fehlschlaegen desselben Treibers (per UpdateID)
+        # blenden wir ihn aus der Suche aus, damit der Overall-Status wieder
+        # ehrlich wird. Der User behaelt die Info im Log ("... ignoriert").
+        # Erfolgreich installierte Treiber loeschen ihren Zaehler wieder.
+        # Datei: %APPDATA%\JustUpdate\driver_blacklist.json
+        # =====================================================================
+        $script:DrvBlacklistThreshold = 3
+        $script:DrvBlacklistPath = Join-Path $env:APPDATA "JustUpdate\driver_blacklist.json"
+        function Load-DriverBlacklist {
+            $bl = @{}
+            try {
+                if (Test-Path $script:DrvBlacklistPath) {
+                    $raw = Get-Content $script:DrvBlacklistPath -Raw -ErrorAction Stop | ConvertFrom-Json
+                    foreach ($p in $raw.PSObject.Properties) {
+                        $bl[$p.Name] = @{
+                            Title       = [string]$p.Value.Title
+                            FailCount   = [int]$p.Value.FailCount
+                            LastAttempt = [string]$p.Value.LastAttempt
+                        }
+                    }
+                }
+            } catch {}
+            return $bl
+        }
+        function Save-DriverBlacklist($bl) {
+            try {
+                $dir = Split-Path -Parent $script:DrvBlacklistPath
+                if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+                $obj = [pscustomobject]@{}
+                foreach ($k in $bl.Keys) {
+                    $obj | Add-Member -NotePropertyName $k -NotePropertyValue ([pscustomobject]$bl[$k])
+                }
+                [IO.File]::WriteAllText($script:DrvBlacklistPath, ($obj | ConvertTo-Json -Depth 5),
+                    (New-Object System.Text.UTF8Encoding($false)))
+            } catch {}
         }
 
         # Heartbeat-Runspace fuer blockierende WUA-Calls (Download/Install). Die WUA-COM-APIs
@@ -1333,7 +1393,7 @@ function Start-Maintenance {
                     Start-Sleep -Seconds $hbInterval
                     if ($sync.Stop -eq $true) { break }
                     $elapsed = [int]((Get-Date) - $started).TotalSeconds
-                    $min = [int]($elapsed / 60); $sec = $elapsed % 60
+                    $min = [int][Math]::Floor($elapsed / 60); $sec = $elapsed % 60
                     $timeStr = if ($min -gt 0) { "${min}m ${sec}s" } else { "${sec}s" }
                     $line = "[$(Get-Date -F 'HH:mm:ss')] ${hbPrefix}laeuft seit $timeStr - bitte warten..."
                     try { $line | Out-File $hbLogFile -Append -Encoding utf8 } catch {}
@@ -1930,18 +1990,51 @@ function Start-Maintenance {
                 }
 
                 L "  Suche nach verfuegbaren Treiber-Updates..."
-                $drvResult = $searcher.Search("IsInstalled=0 AND Type='Driver'")
+                # v2.7.5: IsHidden=0 wie in Modul 3 - Treiber, die der User in den
+                # Windows-Einstellungen ausgeblendet hat, werden respektiert statt
+                # zwangsinstalliert. (Die Verifikations-Re-Scans bleiben bewusst
+                # ohne den Filter - fuers Nachpruefen ist breiter sicherer.)
+                $drvResult = $searcher.Search("IsInstalled=0 AND IsHidden=0 AND Type='Driver'")
 
-                if ($drvResult.Updates.Count -eq 0) {
-                    L "  [OK] Alle Treiber sind auf dem neuesten Stand"
-                    Mark "Drivers" "ok" "keine Treiber-Updates verfuegbar"
+                # Bug-Fix v2.7.5: chronisch fehlschlagende Treiber (per UpdateID) nach
+                # $DrvBlacklistThreshold Fehlversuchen aus der Liste nehmen. Ohne das bleibt
+                # z.B. der superseded HP-USB-Treiber ewig haengen und drueckt den Overall-
+                # Status jedes Laufs strukturell auf "error". $drvIdByTitle merkt sich die
+                # UpdateID pro Titel fuer die Fehl-/Erfolgs-Buchung am Ende.
+                $drvBlacklist = Load-DriverBlacklist
+                $drvIdByTitle = @{}
+                $usableDrv    = @()
+                $drvIgnored   = @()
+                foreach ($d in $drvResult.Updates) {
+                    $uid = try { [string]$d.Identity.UpdateID } catch { $null }
+                    if ($uid) { $drvIdByTitle[$d.Title] = $uid }
+                    if ($uid -and $drvBlacklist.ContainsKey($uid) -and
+                        $drvBlacklist[$uid].FailCount -ge $script:DrvBlacklistThreshold) {
+                        $drvIgnored += $d.Title
+                    } else {
+                        $usableDrv += $d
+                    }
+                }
+                if ($drvIgnored.Count -gt 0) {
+                    L "  [INFO] $($drvIgnored.Count) chronisch fehlschlagende(r) Treiber uebersprungen (>= $($script:DrvBlacklistThreshold) Fehlversuche):"
+                    foreach ($t in $drvIgnored) { L "    - $t (ignoriert)" }
+                }
+
+                if ($usableDrv.Count -eq 0) {
+                    if ($drvIgnored.Count -gt 0) {
+                        L "  [OK] Keine neuen Treiber - $($drvIgnored.Count) chronischer Fehlschlag dauerhaft ignoriert"
+                        Mark "Drivers" "ok" "keine neuen Treiber ($($drvIgnored.Count) chronischer Fehlschlag ignoriert)"
+                    } else {
+                        L "  [OK] Alle Treiber sind auf dem neuesten Stand"
+                        Mark "Drivers" "ok" "keine Treiber-Updates verfuegbar"
+                    }
                 } else {
-                    L "  $($drvResult.Updates.Count) Treiber-Update(s) gefunden:"
+                    L "  $($usableDrv.Count) Treiber-Update(s) gefunden:"
                     L ""
                     $dColl = New-Object -ComObject Microsoft.Update.UpdateColl
                     $drvNum = 1
-                    foreach ($d in $drvResult.Updates) {
-                        L "    [$drvNum/$($drvResult.Updates.Count)] $($d.Title)"
+                    foreach ($d in $usableDrv) {
+                        L "    [$drvNum/$($usableDrv.Count)] $($d.Title)"
                         if (-not $d.EulaAccepted) { try { $d.AcceptEula() | Out-Null } catch {} }
                         $dColl.Add($d) | Out-Null
                         $drvNum++
@@ -1955,6 +2048,22 @@ function Start-Maintenance {
                     try { $dlRes = $dl.Download() } finally { Stop-Heartbeat $hb }
                     if ($dlRes.ResultCode -eq 2) {
                         L "  [OK] Download abgeschlossen"
+                    } elseif ($dlRes.ResultCode -eq 3) {
+                        # v2.7.5: SucceededWithErrors wie in Modul 3 akzeptieren -
+                        # ein teilweiser Download soll nicht ALLE Treiber verwerfen.
+                        L "  [WARNUNG] Download mit Warnungen abgeschlossen"
+                        # Nicht heruntergeladene Treiber aus der Install-Liste nehmen -
+                        # IUpdateInstaller.Install() wirft sonst fuer die GANZE Liste.
+                        for ($di = $dColl.Count - 1; $di -ge 0; $di--) {
+                            if (-not $dColl.Item($di).IsDownloaded) {
+                                L "  [WARNUNG] Nicht heruntergeladen - uebersprungen: $($dColl.Item($di).Title)"
+                                $dColl.RemoveAt($di)
+                            }
+                        }
+                        if ($dColl.Count -eq 0) {
+                            Mark "Drivers" "err" "Treiber-Download fehlgeschlagen (kein Treiber vollstaendig geladen)"
+                            throw "Download failed"
+                        }
                     } else {
                         L "  [FEHLER] Treiber-Download fehlgeschlagen (Status: $($dlRes.ResultCode), HResult: 0x$('{0:X}' -f $dlRes.HResult))"
                         L "         Typischer Grund: fehlende Admin-Rechte"
@@ -1970,6 +2079,7 @@ function Start-Maintenance {
 
                     $drvOk = 0; $drvFail = 0
                     $reportedOk = @()  # Treiber, die WUA als OK meldet — die werden gleich verifiziert
+                    $drvHardFailTitles = @()  # ResultCode 4 o.ae. — echte Install-Fehlschlaege (fuer Blacklist)
                     for ($idx = 0; $idx -lt $dColl.Count; $idx++) {
                         $uResult = $r.GetUpdateResult($idx)
                         $status = switch ($uResult.ResultCode) { 2 {"OK"} 3 {"OK (Warnung)"} 4 {"FEHLGESCHLAGEN"} default {"Status $($uResult.ResultCode)"} }
@@ -1977,13 +2087,15 @@ function Start-Maintenance {
                         if ($uResult.ResultCode -eq 2 -or $uResult.ResultCode -eq 3) {
                             $drvOk++
                             $reportedOk += $dColl.Item($idx).Title
-                        } else { $drvFail++ }
+                        } else { $drvFail++; $drvHardFailTitles += $dColl.Item($idx).Title }
                     }
                     if ($r.RebootRequired) { L "  >>> NEUSTART ERFORDERLICH <<<"; $sync.RebootRequired = $true }
 
                     # FIX v2.3.3: Verifikation - WUA-ResultCode=2 luegt bei optionalen/superseded Treibern.
                     # Re-Search; was immer noch IsInstalled=0 ist, wurde NICHT wirklich installiert.
                     # Fallback: pnputil mit den heruntergeladenen Treiber-Dateien (Microsoft-signiert).
+                    $drvVerifyPending = @()  # Treiber, die trotz WUA-OK nach Re-Scan offen bleiben (fuer Blacklist)
+                    $drvVerifyCrashed = $false  # Re-Scan geworfen -> Blacklist-Zaehler unangetastet lassen
                     if ($reportedOk.Count -gt 0) {
                         L ""
                         L "  Verifiziere Installation (Re-Scan)..."
@@ -2048,6 +2160,7 @@ function Start-Maintenance {
                                     # verloren.
                                     $drvFail += @($reallyPending).Count
                                     $drvOk    = [Math]::Max(0, $drvOk - @($reallyPending).Count)
+                                    $drvVerifyPending = @($reallyPending)
                                     if (@($reallyPending).Count -gt 0) {
                                         L "  [WARNUNG] $(@($reallyPending).Count) Treiber haengen weiterhin (auch nach pnputil):"
                                         foreach ($t in $reallyPending) { L "    - $t" }
@@ -2056,12 +2169,41 @@ function Start-Maintenance {
                                     L "  [WARNUNG] Kein Treiber-Cache fuer pnputil-Fallback vorhanden"
                                     $drvFail += $stillPending.Count
                                     $drvOk = [Math]::Max(0, $drvOk - $stillPending.Count)
+                                    $drvVerifyPending = @($stillPending)
                                 }
                             }
                         } catch {
                             L "  [WARNUNG] Verifikation fehlgeschlagen: $($_.Exception.Message)"
+                            $drvVerifyCrashed = $true
                         }
                     }
+
+                    # Blacklist pflegen (Bug-Fix v2.7.5): Treiber, die auch nach Verifikation/
+                    # pnputil offen bleiben (oder hart mit ResultCode 4 scheitern), hochzaehlen;
+                    # erfolgreich installierte ihren Zaehler wieder loeschen. Erreicht ein Treiber
+                    # $DrvBlacklistThreshold, ueberspringt der naechste Lauf ihn automatisch.
+                    try {
+                        $drvUnresolved = @(@($drvHardFailTitles) + @($drvVerifyPending) | Select-Object -Unique)
+                        $nowStamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+                        foreach ($d in $usableDrv) {
+                            $uid = $drvIdByTitle[$d.Title]
+                            if (-not $uid) { continue }
+                            if ($drvUnresolved -contains $d.Title) {
+                                $prev = if ($drvBlacklist.ContainsKey($uid)) { [int]$drvBlacklist[$uid].FailCount } else { 0 }
+                                $newCount = $prev + 1
+                                $drvBlacklist[$uid] = @{ Title = $d.Title; FailCount = $newCount; LastAttempt = $nowStamp }
+                                if ($newCount -ge $script:DrvBlacklistThreshold) {
+                                    L "  [INFO] '$($d.Title)' hat $newCount Fehlversuche - wird kuenftig uebersprungen"
+                                }
+                            } elseif (-not $drvVerifyCrashed -and $drvBlacklist.ContainsKey($uid)) {
+                                # Nur bei GELUNGENER Verifikation zuruecksetzen - ist der
+                                # Re-Scan geworfen, wissen wir nicht, ob der Treiber wirklich
+                                # installiert wurde, und lassen den Zaehler wie er ist.
+                                [void]$drvBlacklist.Remove($uid)   # diesmal verifiziert geklappt -> Zaehler weg
+                            }
+                        }
+                        Save-DriverBlacklist $drvBlacklist
+                    } catch {}
 
                     if ($drvFail -eq 0) {
                         Mark "Drivers" "ok" "$drvOk Treiber installiert (verifiziert)"
@@ -2129,17 +2271,12 @@ function Start-Maintenance {
                               -Arguments "source update --disable-interactivity" -TimeoutSec 120 `
                               -OutEncoding $utf8Enc
 
-                    L "  Pruefe verfuegbare Updates..."
-                    L ""
-
-                    # Zuerst zeigen was verfuegbar ist
-                    $listOut = & $wg upgrade --accept-source-agreements 2>&1
-                    $listOut | ForEach-Object {
-                        $l = "$_".Trim()
-                        if ($l.Length -gt 2 -and -not (IsProgressNoise $l)) { L "    $l" }
-                    }
-                    L ""
-                    L "  Starte Upgrade aller Apps..."
+                    # Bug-Fix v2.7.5: frueher lief hier erst ein separates `winget upgrade`
+                    # nur zum Anzeigen und danach `winget upgrade --all` - das die Liste vor
+                    # der Installation selbst noch einmal ausgibt. Ergebnis: identische Tabelle
+                    # zweimal im Log + ein ueberfluessiger Netzwerkaufruf. Das Listing von
+                    # `upgrade --all` reicht, also nur noch dieser eine Lauf.
+                    L "  Starte Upgrade aller Apps (winget listet die betroffenen Apps selbst auf)..."
                     L ""
 
                     # Erfolgs-Erkennung. NEBEN dem klaren "Erfolgreich installiert" gibt
@@ -2803,20 +2940,42 @@ function Start-Maintenance {
                         L "    Cache-Groesse: $sz MB"
                         $cutoff = (Get-Date).AddDays(-1)
                         $skipped = 0
-                        Get-ChildItem $wuCache -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-                            if (-not $_.PSIsContainer -and $_.LastWriteTime -gt $cutoff) {
-                                $skipped++
-                            } else {
-                                try { Remove-Item $_.FullName -Force -Recurse -ErrorAction Stop } catch {}
+                        # Bug-Fix v2.7.5: NUR Dateien loeschen, danach leer gewordene
+                        # Ordner. Vorher wurden auch ORDNER mit altem Datum rekursiv
+                        # geloescht - inklusive FRISCHER Dateien darin (das Ordner-Datum
+                        # aendert sich nur bei direktem Inhaltswechsel, nicht bei
+                        # Aenderungen tiefer unten). Das hebelte den "frische Dateien
+                        # schonen"-Schutz gegen 0x80070003 wieder aus.
+                        Get-ChildItem $wuCache -Recurse -Force -ErrorAction SilentlyContinue |
+                            Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+                                if ($_.LastWriteTime -gt $cutoff) {
+                                    $skipped++
+                                } else {
+                                    try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch {}
+                                }
                             }
-                        }
+                        # Leer gewordene Unterordner entfernen - tiefste zuerst, damit
+                        # Eltern-Ordner nach dem Leeren ihrer Kinder auch dran sind.
+                        Get-ChildItem $wuCache -Recurse -Force -ErrorAction SilentlyContinue |
+                            Where-Object { $_.PSIsContainer } |
+                            Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
+                                try {
+                                    if (-not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue)) {
+                                        Remove-Item $_.FullName -Force -ErrorAction Stop
+                                    }
+                                } catch {}
+                            }
                         foreach ($svcName in $stoppedSvcs) {
                             try { Start-Service -Name $svcName -ErrorAction Stop } catch {}
                         }
+                        # Ehrliche Zahl: tatsaechlich freigegebenen Platz messen, statt
+                        # die Gesamtgroesse zu melden obwohl frische Dateien bleiben.
+                        $szAfter = [Math]::Round((Get-ChildItem $wuCache -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+                        $szFreed = [Math]::Max(0, [Math]::Round($sz - $szAfter, 1))
                         if ($skipped -gt 0) {
-                            L "    [OK] $sz MB bereinigt ($skipped frische Dateien geschont fuer laufende Downloads)"
+                            L "    [OK] $szFreed MB freigegeben ($skipped frische Dateien geschont fuer laufende Downloads)"
                         } else {
-                            L "    [OK] $sz MB freigegeben"
+                            L "    [OK] $szFreed MB freigegeben"
                         }
                     } else {
                         L "    Kein WU-Cache gefunden"

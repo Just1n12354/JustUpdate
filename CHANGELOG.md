@@ -1,5 +1,49 @@
 # JustUpdate — Changelog
 
+## v2.7.5 (12.07.2026)
+
+- **Fix (KRITISCH): Chronisch fehlschlagende Treiber machen den Lauf nicht mehr
+  dauerhaft "error".** Manche Microsoft-Update-Katalog-Eintraege (klassisch: der
+  superseded HP-USB-Treiber von 2018) bietet Windows Update dem PC endlos an, obwohl
+  der In-Box-Treiber neuer und aktiv ist. WUA meldet `Install=OK`, der Re-Scan findet
+  ihn aber weiter offen — dadurch war der Overall-Status jedes Laufs strukturell
+  `error`, egal wie sauber die anderen 7 Module liefen. Neu: Nach 3 Fehlversuchen
+  desselben Treibers (per `UpdateID`) wird er automatisch aus der Suche genommen und
+  im Log als `ignoriert` ausgewiesen. Persistiert in
+  `%APPDATA%\JustUpdate\driver_blacklist.json`; ein Treiber, der doch mal durchgeht,
+  loescht seinen Zaehler wieder.
+- **Fix: DISM-/Modul-Dauer-Anzeige sprang um eine Minute.** `[int]($sekunden/60)`
+  nutzte PowerShells Banker-Rounding (round-half-to-even), also wurde z.B. aus 90 s
+  faelschlich `2m 30s` statt `1m 30s`. Jetzt via `[Math]::Floor` — betrifft den
+  DISM-Heartbeat und die "(Modul-Dauer: …)"-Zeile.
+- **Fix: Winget listete die verfuegbaren Apps nicht mehr doppelt.** Der separate
+  `winget upgrade`-Vorab-Aufruf entfaellt; das Listing von `winget upgrade --all`
+  reicht — ein Netzwerkaufruf weniger, Log lesbarer.
+- **Fix: WU-Cache-Bereinigung konnte frische Downloads doch loeschen.** Der
+  Schutz aus v2.3.3 ("frische Dateien schonen") prueft nur Dateien — ORDNER mit
+  altem Datum wurden aber rekursiv geloescht, inklusive frischer Dateien darin
+  (das Ordner-Datum aendert sich nur bei direktem Inhaltswechsel). Jetzt werden
+  nur Dateien aelter als 1 Tag geloescht und danach leer gewordene Ordner
+  entfernt. Zusaetzlich meldet das Log den TATSAECHLICH freigegebenen Platz
+  statt der Cache-Gesamtgroesse.
+- **Fix: Gespeicherte Sprache wurde beim Start nicht auf die UI angewendet.**
+  `Restore-JUSettings` lief nach `Update-UI`, der SelectionChanged-Handler war
+  aber noch nicht registriert — die ComboBox zeigte z.B. English, alle Texte
+  blieben Deutsch. Reihenfolge getauscht.
+- **Fix: Zweiter Wartungslauf in derselben Sitzung ueberschrieb das
+  result-JSON des ersten.** Log-Datei (und damit der abgeleitete
+  `result_*.json`-Name) wurde nur einmal beim App-Start erzeugt; Lauf 2 haengte
+  ans selbe Log an. Jetzt bekommt jeder Lauf seine eigene Log-Datei.
+- **Fix: Treiber-Suche respektiert jetzt `IsHidden=0`** (wie Modul 3) — Treiber,
+  die der User in den Windows-Einstellungen ausgeblendet hat, werden nicht mehr
+  zwangsinstalliert.
+- **Fix: Treiber-Download mit `ResultCode 3` (SucceededWithErrors) verwirft
+  nicht mehr alle Treiber.** Vollstaendig geladene Treiber werden installiert,
+  nicht geladene einzeln uebersprungen und geloggt (wie Modul 3).
+- **Kosmetik: Maximieren-Button zeigte Zeichensalat.** Das Symbol stand als
+  literales Unicode-Zeichen in der BOM-losen .ps1 — Windows PowerShell liest die
+  Datei als ANSI, aus `☐` wurde Mojibake. Jetzt als XML-Entity `&#x2610;`.
+
 ## v2.7.4 (05.07.2026)
 
 - **SICHERHEIT: Der aggressive Prozess-Kill im Winget-Retry ist jetzt eingezaeunt.**
