@@ -65,13 +65,33 @@ v1 2.7.6  ──Self-Update──▶  v1 2.7.7  ──EXE-Migration──▶  v2
 erreicht** — sowohl Self-Update als auch Migration prüfen `-not $isExe` und
 überspringen sich dort.
 
+## Installation für Neukunden
+
+`JustUpdate-Setup.exe` vom Release herunterladen und doppelklicken. Das Setup
+fragt zuerst nach Administratorrechten, installiert nach `C:\Program Files\JustUpdate`,
+legt Verknüpfungen auf Desktop und im Startmenü an und trägt sich in „Programme
+und Features" ein. Eine ältere Installation wird dabei abgelöst, nicht danebengestellt.
+
+Bestandskunden brauchen das **nicht** — ihr JustUpdate aktualisiert sich selbst
+(siehe Update-Weg oben).
+
+Gebaut wird das Setup aus `JustUpdate/Installer/JustUpdate.iss` (Inno Setup 6,
+`winget install JRSoftware.InnoSetup`). Die fertige Datei landet neben dem Skript
+und ist bewusst **nicht** in Git — sie hängt am Release.
+
 ## Neue Version veröffentlichen
 
 ```powershell
 cd JustUpdate
-.\veroeffentlichen.ps1                 # baut nur:  dist\JustUpdate.exe
+.\veroeffentlichen.ps1                 # baut: dist\JustUpdate.exe + Installer\JustUpdate-Setup.exe
 .\veroeffentlichen.ps1 -Release 2.7.9  # baut + legt das GitHub-Release an
 ```
+
+> **Vor jedem Release: die gebaute EXE STARTEN.** Ein „Build erfolgreich" sagt
+> nichts darüber, ob das Fenster aufgeht. v2.7.8.1 wurde genau so mit einem
+> Absturz beim Start ausgeliefert (ein Icon war als `<ApplicationIcon>` gesetzt,
+> aber nicht als `<Resource>` eingebettet — der XAML-Parser starb beim Laden des
+> Fensters) und musste zurückgezogen werden.
 
 Die EXE ist **self-contained** (der Kunde hat kein .NET-Runtime) und darum rund
 62 MB gross. Das Release-Asset **muss** `JustUpdate.exe` heissen.

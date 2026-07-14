@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 # Baut die Auslieferung:
 #   dist\JustUpdate.exe        - die App selbst (self-contained, eine Datei)
 #   dist\JustUpdate-Setup.exe  - Setup fuer Neukunden
@@ -77,7 +77,7 @@ if (-not $OhneSetup) {
 
         if ($LASTEXITCODE -ne 0) { throw "Das Setup konnte nicht gebaut werden (Exit-Code $LASTEXITCODE)." }
 
-        $setup = Join-Path $ziel 'JustUpdate-Setup.exe'
+        $setup = Join-Path $wurzel 'Installer\JustUpdate-Setup.exe'
         if (-not (Test-Path $setup)) { throw "JustUpdate-Setup.exe wurde nicht erzeugt." }
 
         $setupMb = [math]::Round((Get-Item $setup).Length / 1MB, 1)
@@ -109,7 +109,7 @@ if (-not $Release) {
 Write-Host "Lege GitHub-Release v$Release an ..." -ForegroundColor Cyan
 
 $assets = @($exe)
-$setup = Join-Path $ziel 'JustUpdate-Setup.exe'
+$setup = Join-Path $wurzel 'Installer\JustUpdate-Setup.exe'
 if (Test-Path $setup) { $assets += $setup }
 
 gh release create "v$Release" $assets `
@@ -120,3 +120,4 @@ gh release create "v$Release" $assets `
 if ($LASTEXITCODE -ne 0) { throw "Das Release konnte nicht angelegt werden (gh eingeloggt?)." }
 
 Write-Host "Release v$Release veroeffentlicht." -ForegroundColor Green
+

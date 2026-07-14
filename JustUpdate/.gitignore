@@ -12,3 +12,7 @@ obj/
 
 # Auslieferungsartefakt (wird von veroeffentlichen.ps1 gebaut)
 dist/
+
+# Die gebaute Setup-Datei (57 MB) gehoert nicht in die Git-Historie -
+# sie haengt als Asset am GitHub-Release.
+Installer/JustUpdate-Setup.exe

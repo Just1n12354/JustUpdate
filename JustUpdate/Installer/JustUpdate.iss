@@ -50,7 +50,9 @@ DisableDirPage=auto
 ; "Program Files" schreiben darf.
 PrivilegesRequired=admin
 
-OutputDir=..\dist
+; Die fertige Setup-Datei landet neben diesem Skript - das ist die Datei, die
+; man auf einen beliebigen Windows-PC kopiert und doppelklickt.
+OutputDir=.
 OutputBaseFilename=JustUpdate-Setup
 SetupIconFile=..\JustUpdate.Ui\justupdate.ico
 UninstallDisplayIcon={app}\{#ExeName}
@@ -77,7 +79,13 @@ Name: "{group}\{#Name} deinstallieren"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#Name}"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#ExeName}"; Description: "{#Name} jetzt starten"; Flags: nowait postinstall skipifsilent
+; shellexec ist PFLICHT, nicht Kosmetik:
+; Inno startet "postinstall"-Eintraege bewusst als der urspruengliche,
+; NICHT erhoehte Benutzer - und zwar per CreateProcess. JustUpdate.exe verlangt
+; im Manifest Adminrechte, CreateProcess kann nicht selbst elevieren und bricht
+; mit "CreateProcess schlug fehl; Code 740" ab.
+; shellexec geht ueber ShellExecute, das loest den UAC-Dialog aus.
+Filename: "{app}\{#ExeName}"; Description: "{#Name} jetzt starten"; Flags: nowait postinstall skipifsilent shellexec
 
 [UninstallDelete]
 ; Die App legt beim Self-Update die alte EXE als .alt daneben. Ohne diesen
@@ -85,6 +93,54 @@ Filename: "{app}\{#ExeName}"; Description: "{#Name} jetzt starten"; Flags: nowai
 Type: files; Name: "{app}\{#ExeName}.alt"
 
 [Code]
+const
+  // Die Vorgaenger-Installation ("JustUpdate - System Maintenance Pro", v2.4.5)
+  // war ebenfalls ein Inno-Setup und hat einen eigenen Eintrag in "Programme
+  // und Features". Ohne Abloesung stehen dort ZWEI JustUpdate-Eintraege und im
+  // Programmordner zwei Deinstallierer.
+  AltSchluessel = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\JustUpdate - System Maintenance Pro_is1';
+
+function AlterDeinstallierer(): String;
+var
+  Wert: String;
+begin
+  Result := '';
+
+  if RegQueryStringValue(HKLM, AltSchluessel, 'UninstallString', Wert) then
+    Result := RemoveQuotes(Wert)
+  else if RegQueryStringValue(HKLM32, AltSchluessel, 'UninstallString', Wert) then
+    Result := RemoveQuotes(Wert);
+end;
+
+// Entfernt die Vorgaenger-Installation, BEVOR die neue geschrieben wird.
+// Der alte Deinstallierer raeumt nur weg, was er selbst installiert hat (die
+// .ps1, sein Symbol, seine Verknuepfungen) - eine per EXE-Migration
+// dazugekommene JustUpdate.exe fasst er nicht an.
+procedure AltinstallationAbloesen();
+var
+  Pfad: String;
+  Code: Integer;
+begin
+  Pfad := AlterDeinstallierer();
+
+  if Pfad = '' then
+    Exit;
+
+  if FileExists(Pfad) then
+  begin
+    Exec(Pfad, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+         '', SW_HIDE, ewWaitUntilTerminated, Code);
+  end
+  else
+  begin
+    // Der Eintrag steht noch in "Programme und Features", der Deinstallierer
+    // ist aber weg (Ordner von Hand geloescht). So ein Zombie-Eintrag laesst
+    // sich vom Kunden nicht mehr entfernen - also raeumen wir ihn hier weg.
+    RegDeleteKeyIncludingSubkeys(HKLM, AltSchluessel);
+    RegDeleteKeyIncludingSubkeys(HKLM32, AltSchluessel);
+  end;
+end;
+
 function AltinstallationGefunden(): Boolean;
 var
   Pfade: TArrayOfString;
@@ -112,10 +168,13 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
 
-  if AltinstallationGefunden() then
+  if AltinstallationGefunden() and (AlterDeinstallierer() = '') then
   begin
+    // Alte PowerShell-Fassung da, aber ohne Installer-Eintrag (von Hand
+    // hingelegt). Dann kann das Setup sie nicht abloesen - der Kunde soll
+    // wissen, dass er gar nichts tun muesste.
     Result := MsgBox(
-      'Auf diesem Rechner ist bereits die ältere PowerShell-Fassung von JustUpdate installiert.' + #13#10 + #13#10 +
+      'Auf diesem Rechner liegt bereits die ältere PowerShell-Fassung von JustUpdate.' + #13#10 + #13#10 +
       'Du musst nichts neu installieren: Starte einfach dein vorhandenes JustUpdate — es aktualisiert sich von allein auf die neue Version und biegt die Verknüpfungen um.' + #13#10 + #13#10 +
       'Trotzdem hier weiter installieren?',
       mbConfirmation, MB_YESNO) = IDYES;
@@ -126,6 +185,11 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Aufgabe: Integer;
 begin
+  // Vor dem Kopieren: die Vorgaenger-Installation sauber abloesen, damit nicht
+  // zwei JustUpdate-Eintraege in "Programme und Features" stehen.
+  if CurStep = ssInstall then
+    AltinstallationAbloesen();
+
   if CurStep = ssPostInstall then
   begin
     // Eine geplante Wartung aus der Vorgaengerversion zeigt noch auf den alten
