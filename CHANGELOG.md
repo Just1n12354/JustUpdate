@@ -1,5 +1,28 @@
 # JustUpdate — Changelog
 
+## v2.7.8.1 (14.07.2026)
+
+Erste Version, die sich über das Self-Update der neuen App verteilt — gleichzeitig
+der Test dafür.
+
+- **App-Symbol.** Das rote Quadrat mit dem weissen „J" liegt jetzt als echtes
+  Programmsymbol vor und erscheint in Taskleiste, Startmenü und auf dem Desktop.
+- **Versionsanzeige korrigiert.** Die vierte Stelle wurde verschluckt: eine
+  Version 2.7.8.1 erschien im Fenster als „2.7.8".
+
+## v2.7.8 (14.07.2026)
+
+**Die neue JustUpdate-App (C#).** Ersetzt die PowerShell-Fassung.
+
+- Oberfläche mit ein- und ausschaltbaren Modulen, Live-Log und Ergebnis je Modul.
+- **Info-Fenster**: zu jedem Modul steht, was es macht — und was es ausdrücklich
+  nicht macht.
+- **Patch-Notes** und **Update-Prüfung** direkt in der Titelleiste.
+- **Automatik**: wöchentliche Wartung. War der Rechner zum Termin aus, wird sie
+  nach dem nächsten Start nachgeholt — es fällt kein Lauf mehr aus.
+- Ein abstürzendes Modul reisst die restliche Wartung nicht mehr mit, und der
+  Exit-Code sagt endlich die Wahrheit (0 = OK, 1 = Warnungen, 2 = Fehler).
+
 ## v2.7.7 (14.07.2026)
 
 **JustUpdate wird zur richtigen Anwendung.** Diese Version der PowerShell-Fassung
