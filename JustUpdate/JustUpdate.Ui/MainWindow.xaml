@@ -43,6 +43,23 @@
                   Content="&#x2610;" FontSize="12" Click="FensterMaximieren" />
           <Button x:Name="xMinimieren" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
                   Content="_" FontSize="14" Click="FensterMinimieren" />
+
+          <Button x:Name="xInfo" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="i" FontSize="14" FontWeight="Bold" Margin="0,0,4,0"
+                  Foreground="{StaticResource Acc}" Click="InfoZeigen"
+                  ToolTip="Was JustUpdate macht — und was nicht" />
+          <Button x:Name="xPatch" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="?" FontSize="14" FontWeight="Bold" Margin="0,0,4,0"
+                  Click="PatchNotizenZeigen"
+                  ToolTip="Patch-Notes / Versions-Historie" />
+          <Button x:Name="xUpdate" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="&#x21BB;" FontSize="14" Margin="0,0,4,0"
+                  Click="NachUpdatesSuchen"
+                  ToolTip="Nach Updates suchen" />
+          <Button x:Name="xZeitplan" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="&#x23F0;" FontSize="13" Margin="0,0,4,0"
+                  Click="ZeitplanZeigen"
+                  ToolTip="Automatische Wartung planen (wöchentlich)" />
         </DockPanel>
       </Grid>
 

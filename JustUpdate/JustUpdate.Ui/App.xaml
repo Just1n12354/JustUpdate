@@ -154,6 +154,140 @@
       </Setter>
     </Style>
 
+    <!-- Auswahlfeld (ComboBox).
+         WPF ignoriert Background/Foreground bei der Standard-ComboBox komplett -
+         das Ding bleibt weiss, egal was man setzt. Deshalb ein eigenes Template
+         inklusive Aufklapp-Liste. -->
+    <Style x:Key="Auswahlfeld" TargetType="ComboBox">
+      <Setter Property="Foreground" Value="{StaticResource Fg}" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontFamily" Value="Segoe UI" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <ToggleButton x:Name="Knopf" Focusable="False" ClickMode="Press"
+                            IsChecked="{Binding IsDropDownOpen,
+                                        Mode=TwoWay,
+                                        RelativeSource={RelativeSource TemplatedParent}}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Rahmen" CornerRadius="8"
+                            Background="{StaticResource BgTief}"
+                            BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="24" />
+                        </Grid.ColumnDefinitions>
+                        <Path Grid.Column="1" HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              Data="M 0 0 L 4 4 L 8 0 Z"
+                              Fill="{StaticResource FgDim}" />
+                      </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="Rahmen" Property="BorderBrush"
+                                Value="{StaticResource Acc}" />
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+
+              <ContentPresenter Margin="12,0,28,0" VerticalAlignment="Center"
+                                IsHitTestVisible="False"
+                                Content="{TemplateBinding SelectionBoxItem}" />
+
+              <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                     AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                <Border Background="{StaticResource BgCard}"
+                        BorderBrush="{StaticResource Bdr}" BorderThickness="1"
+                        CornerRadius="8" Margin="0,4,0,0"
+                        MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                  <Border.Effect>
+                    <DropShadowEffect BlurRadius="20" ShadowDepth="0" Opacity="0.6" Color="#000" />
+                  </Border.Effect>
+                  <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsPresenter />
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+
+      <Setter Property="ItemContainerStyle">
+        <Setter.Value>
+          <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource Fg}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                  <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
+                          Padding="{TemplateBinding Padding}" Margin="3,1">
+                    <ContentPresenter />
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="Bd" Property="Background" Value="#25252f" />
+                    </Trigger>
+                    <Trigger Property="IsSelected" Value="True">
+                      <Setter TargetName="Bd" Property="Background" Value="{StaticResource Acc}" />
+                      <Setter Property="Foreground" Value="White" />
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Auswahlknopf (RadioButton) im App-Stil statt Windows-Grau -->
+    <Style x:Key="Auswahl" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{StaticResource Fg}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Grid Background="Transparent">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="26" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+
+              <Border x:Name="Ring" Width="18" Height="18" CornerRadius="9"
+                      VerticalAlignment="Top" Margin="0,2,0,0"
+                      Background="{StaticResource BgTief}"
+                      BorderBrush="{StaticResource Bdr}" BorderThickness="1.5">
+                <Ellipse x:Name="Punkt" Width="8" Height="8"
+                         Fill="{StaticResource Acc}" Visibility="Collapsed" />
+              </Border>
+
+              <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Ring" Property="BorderBrush" Value="{StaticResource Acc}" />
+                <Setter TargetName="Punkt" Property="Visibility" Value="Visible" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Ring" Property="BorderBrush" Value="{StaticResource AccH}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- Fortschrittsbalken mit demselben Rot-Verlauf -->
     <Style x:Key="Fortschritt" TargetType="ProgressBar">
       <Setter Property="Height" Value="6" />

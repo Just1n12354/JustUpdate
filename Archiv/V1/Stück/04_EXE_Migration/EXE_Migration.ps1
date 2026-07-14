@@ -3,9 +3,9 @@
 # Holt die EXE aus dem GitHub-Release, legt sie in den App-Ordner, biegt
 # die Verknuepfungen um und startet die EXE. Einmalig (Marker-Datei).
 #
-# v2.7.7: SCHARF. Die Nachfolge-EXE (C#/WPF, eigene Versionslinie ab 3.0.0)
-# liegt als Release-Asset JustUpdate.exe bereit und bringt ein eigenes
-# Self-Update mit - der Kunde bleibt also auch nach der Migration erreichbar.
+# v2.7.7: SCHARF. Die Nachfolge-EXE (C#/WPF, ab v2.7.8) liegt als Release-Asset
+# JustUpdate.exe bereit und bringt ein eigenes Self-Update mit - der Kunde
+# bleibt also auch nach der Migration erreichbar.
 # Abschaltbar mit JUSTUPDATE_MIGRATE_EXE=0 (Notbremse, z.B. wenn ein
 # Virenscanner die EXE wegschnappt).
 # Die .ps1 bleibt liegen (Fallback) - die Migration ist reversibel, die

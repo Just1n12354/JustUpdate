@@ -22,6 +22,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private volatile bool _abbruchGewuenscht;
     private bool _kannStarten = true;
+    private bool _automatik;
     private string? _logDatei;
 
     public MainWindow()
@@ -34,30 +35,70 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         [
             new(Wiederherstellungspunkt.Name, "R", "Wiederherstellungspunkt",
                 "Rückweg anlegen, bevor etwas verändert wird", "#A3243B",
+                "Legt einen Windows-Systemwiederherstellungspunkt an, damit du den " +
+                "gesamten Wartungslauf zurückdrehen kannst.",
+                "Sichert KEINE persönlichen Dateien. Ein Wiederherstellungspunkt " +
+                "ist kein Backup.",
                 Wiederherstellungspunkt.Ausfuehren),
+
             new(Defender.Name, "D", "Microsoft Defender",
                 "Signaturen aktualisieren und prüfen", "#A3243B",
+                "Aktualisiert die Virensignaturen des in Windows eingebauten Defenders " +
+                "und startet eine Prüfung.",
+                "Installiert kein zusätzliches Virenprogramm und schaltet ein " +
+                "vorhandenes Fremdprodukt nicht ab.",
                 Defender.Ausfuehren),
+
             new(WindowsUpdate.Name, "W", "Windows Update",
                 "Updates suchen und installieren", "#22C55E",
+                "Sucht über Windows Update nach Sicherheits- und Systemupdates und " +
+                "installiert sie.",
+                "Startet den Rechner NICHT von selbst neu. Ein nötiger Neustart wird " +
+                "am Ende nur gemeldet.",
                 WindowsUpdate.Ausfuehren),
+
             new(Treiber.Name, "T", "Treiber",
                 "Treiber-Updates prüfen", "#e8a020",
+                "Prüft die von Windows Update angebotenen Treiber und installiert sie.",
+                "Lädt keine Treiber von Herstellerseiten. Grafiktreiber holst du " +
+                "weiterhin besser direkt bei NVIDIA oder AMD.",
                 Treiber.Ausfuehren),
+
             new(Apps.Name, "A", "Apps (winget)",
                 "Installierte Programme aktualisieren", "#A3243B",
+                "Aktualisiert alle installierten Programme, die winget kennt " +
+                "(Browser, Tools, Treiberprogramme ...).",
+                "Installiert nichts Neues und deinstalliert nichts. Es werden nur " +
+                "vorhandene Programme aktualisiert.",
                 Apps.Ausfuehren),
+
             new(Store.Name, "S", "Microsoft Store",
                 "Store-Apps aktualisieren", "#A855F7",
+                "Stösst die Aktualisierung der über den Microsoft Store installierten " +
+                "Apps an.",
+                "Öffnet den Store nicht und kauft nichts.",
                 Store.Ausfuehren),
+
             new(SystemReparatur.Name, "F", "Systemreparatur",
                 "SFC und DISM — dauert lange", "#EF4444",
+                "Prüft die Windows-Systemdateien (SFC) und repariert das " +
+                "Systemabbild (DISM). Kann 20 bis 40 Minuten dauern.",
+                "Fasst deine eigenen Dateien und Programme nicht an.",
                 SystemReparatur.Ausfuehren),
+
             new(Netzwerk.Name, "N", "Netzwerk",
                 "DNS-Flush, Winsock- und TCP/IP-Reset", "#06B6D4",
+                "Leert den DNS-Zwischenspeicher und setzt Winsock und TCP/IP zurück — " +
+                "hilft bei hartnäckigen Verbindungsproblemen.",
+                "ACHTUNG: Die Netzwerkverbindung bricht dabei kurz ab und der Reset " +
+                "wirkt erst nach einem Neustart. Deshalb standardmässig AUS.",
                 Netzwerk.Ausfuehren),
+
             new(Bereinigung.Name, "C", "Bereinigung",
                 "Temp-Dateien älter als sieben Tage", "#22C55E",
+                "Löscht temporäre Dateien, die älter als sieben Tage sind.",
+                "Räumt keine Registry auf, löscht keine Downloads, keinen Papierkorb " +
+                "und keine Browserdaten.",
                 Bereinigung.Ausfuehren),
         ];
 
@@ -116,9 +157,39 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var app = (App)Application.Current;
 
+        if (app.Automatik)
+        {
+            // Geplanter Lauf: KEIN Self-Update (das braucht eine Rueckfrage und
+            // wuerde den unbeaufsichtigten Lauf blockieren) - genau wie in v1.
+            // Der naechste manuelle Start holt das Update nach.
+            StarteAutomatik(app.AutomatikModule);
+            return;
+        }
+
         // Vor dem Lauf pruefen, nicht danach: sonst faehrt der Kunde eine Stunde
         // Wartung mit der alten Version und darf danach nochmal.
         await SelbstAktualisierung.PruefenUndAnbieten(this, app.Sperre);
+    }
+
+    /// <summary>
+    /// Startet die Wartung ohne Klick und schliesst das Fenster danach. Der
+    /// Exit-Code macht den geplanten Lauf auswertbar: 0 = OK, 1 = Warnungen,
+    /// 2 = Fehler.
+    /// </summary>
+    private void StarteAutomatik(string[] module)
+    {
+        if (module.Length > 0)
+        {
+            foreach (ModulEintrag eintrag in _module)
+            {
+                eintrag.Ausgewaehlt = module.Contains(
+                    eintrag.Schluessel,
+                    StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        _automatik = true;
+        Starten(this, new RoutedEventArgs());
     }
 
     // ---- Fensterrahmen (WindowStyle=None, also selbst gebaut) --------------
@@ -212,6 +283,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Process.Start(new ProcessStartInfo(_logDatei) { UseShellExecute = true });
     }
 
+    // ---- Titelleisten-Knoepfe ---------------------------------------------
+
+    private void InfoZeigen(object sender, RoutedEventArgs e)
+    {
+        new InfoFenster(_module) { Owner = this }.ShowDialog();
+    }
+
+    private void PatchNotizenZeigen(object sender, RoutedEventArgs e)
+    {
+        new ChangelogFenster { Owner = this }.ShowDialog();
+    }
+
+    private async void NachUpdatesSuchen(object sender, RoutedEventArgs e)
+    {
+        if (!KannStarten)
+        {
+            MessageBox.Show(this,
+                "Während einer laufenden Wartung wird nicht aktualisiert.",
+                "JustUpdate", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var app = (App)Application.Current;
+
+        // leise: false - der Kunde hat selbst geklickt und will eine Antwort,
+        // auch wenn alles aktuell ist.
+        await SelbstAktualisierung.PruefenUndAnbieten(this, app.Sperre, leise: false);
+    }
+
+    private void ZeitplanZeigen(object sender, RoutedEventArgs e)
+    {
+        string[] auswahl = _module
+            .Where(m => m.Ausgewaehlt)
+            .Select(m => m.Schluessel)
+            .ToArray();
+
+        new ZeitplanFenster(auswahl) { Owner = this }.ShowDialog();
+    }
+
     // ---- Wartungslauf -----------------------------------------------------
 
     private async void Starten(object sender, RoutedEventArgs e)
@@ -294,7 +404,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (neustartNoetig)
         {
             xStatus.Text += " NEUSTART ERFORDERLICH.";
+        }
 
+        // Exit-Code wie in v1 und in der Konsolen-Variante: 0 = OK,
+        // 1 = Warnungen, 2 = Fehler. Sonst ist ein geplanter Lauf nicht
+        // auswertbar.
+        int exitCode = fehlerAnzahl > 0 ? 2 : warnungen > 0 ? 1 : 0;
+
+        if (_automatik)
+        {
+            // Geplanter Lauf: kein Dialog, niemand sitzt davor. Fenster zu,
+            // Exit-Code raus.
+            Application.Current.Shutdown(exitCode);
+            return;
+        }
+
+        if (neustartNoetig)
+        {
             MessageBox.Show(this,
                 "Mindestens ein Modul verlangt einen Neustart, damit die Änderungen " +
                 "wirksam werden.",

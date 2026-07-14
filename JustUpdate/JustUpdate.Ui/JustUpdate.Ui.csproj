@@ -17,10 +17,11 @@
     <AssemblyName>JustUpdate</AssemblyName>
     <RootNamespace>JustUpdate.Ui</RootNamespace>
 
-    <!-- Eigene Versionslinie: v1 (PowerShell) endet bei 2.7.7, dieser Nachfolger
-         beginnt bei 3.0.0. Das Self-Update vergleicht diese Zahl mit dem
-         tag_name des neuesten GitHub-Releases. -->
-    <Version>3.0.0</Version>
+    <!-- Dieselbe Versionslinie wie die PowerShell-Fassung, damit der Kunde eine
+         durchgehende Reihe sieht: .ps1 2.7.6 -> .ps1 2.7.7 (Bruecke, migriert)
+         -> EXE 2.7.8. Das Self-Update vergleicht diese Zahl mit dem tag_name
+         des neuesten GitHub-Releases. -->
+    <Version>2.7.8</Version>
     <AssemblyTitle>JustUpdate</AssemblyTitle>
     <Product>JustUpdate</Product>
     <Company>Itin TechSolutions</Company>

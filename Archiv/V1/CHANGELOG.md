@@ -3,9 +3,9 @@
 ## v2.7.7 (14.07.2026)
 
 **JustUpdate wird zur richtigen Anwendung.** Diese Version der PowerShell-Fassung
-hat nur noch eine Aufgabe: sie übergibt an den Nachfolger.
+hat nur noch eine Aufgabe: sie übergibt an den Nachfolger (v2.7.8).
 
-- **Umstieg auf die neue JustUpdate-App (v3).** Beim nächsten Start lädt
+- **Umstieg auf die neue JustUpdate-App.** Beim nächsten Start lädt
   JustUpdate einmalig die neue Programmdatei, biegt die vorhandenen
   Verknüpfungen darauf um und startet sie. **Kein Neuinstallieren nötig.**
 - Die neue App ist in C# geschrieben statt in PowerShell: sie startet schneller,

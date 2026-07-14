@@ -21,12 +21,16 @@ internal sealed class ModulEintrag : INotifyPropertyChanged
         string anzeige,
         string beschreibung,
         string farbe,
+        string macht,
+        string machtNicht,
         Action ausfuehren)
     {
         Schluessel = schluessel;
         Kuerzel = kuerzel;
         Anzeige = anzeige;
         Beschreibung = beschreibung;
+        Macht = macht;
+        MachtNicht = machtNicht;
         Ausfuehren = ausfuehren;
 
         var pinsel = new SolidColorBrush((Color)ColorConverter.ConvertFromString(farbe));
@@ -43,6 +47,16 @@ internal sealed class ModulEintrag : INotifyPropertyChanged
     public string Anzeige { get; }
 
     public string Beschreibung { get; }
+
+    /// <summary>Was das Modul konkret ausfuehrt - fuers Info-Fenster.</summary>
+    public string Macht { get; }
+
+    /// <summary>
+    /// Was das Modul ausdruecklich NICHT tut. Genauso wichtig wie das, was es
+    /// tut: der Kunde soll nicht raten muessen, ob JustUpdate ihm eben die
+    /// Registry aufgeraeumt oder Programme deinstalliert hat.
+    /// </summary>
+    public string MachtNicht { get; }
 
     /// <summary>Modulfarbe wie in v1 - die Karten sollen auf einen Blick unterscheidbar sein.</summary>
     public Brush Farbe { get; }

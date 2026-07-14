@@ -36,10 +36,18 @@ internal static class SelbstAktualisierung
     /// <summary>
     /// Prueft auf ein Update und installiert es nach Rueckfrage. Liefert true,
     /// wenn die App sich gerade beendet, weil der Nachfolger startet.
+    ///
+    /// leise=true beim automatischen Start (kein Kunde will beim Oeffnen
+    /// weggeklickt werden, wenn ohnehin alles aktuell ist).
+    /// leise=false, wenn der Kunde selbst auf "nach Updates suchen" geklickt
+    /// hat - dann MUSS eine Antwort kommen, sonst wirkt der Knopf kaputt.
     /// </summary>
-    public static async Task<bool> PruefenUndAnbieten(Window besitzer, Einzelinstanz sperre)
+    public static async Task<bool> PruefenUndAnbieten(
+        Window besitzer,
+        Einzelinstanz sperre,
+        bool leise = true)
     {
-        if (Environment.GetEnvironmentVariable("JUSTUPDATE_NO_SELFUPDATE") == "1")
+        if (leise && Environment.GetEnvironmentVariable("JUSTUPDATE_NO_SELFUPDATE") == "1")
         {
             return false;
         }
@@ -50,6 +58,16 @@ internal static class SelbstAktualisierung
 
             if (neu is null || neu.Value.version <= EigeneVersion)
             {
+                if (!leise)
+                {
+                    MessageBox.Show(
+                        besitzer,
+                        $"JustUpdate ist aktuell (v{EigeneVersion.ToString(3)}).",
+                        "JustUpdate",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+
                 return false;
             }
 
@@ -92,11 +110,24 @@ internal static class SelbstAktualisierung
             Austauschen(temporaer, sperre);
             return true;
         }
-        catch (Exception)
+        catch (Exception fehler)
         {
             // Offline, GitHub nicht erreichbar, keine Schreibrechte: die
             // vorhandene Version laeuft normal weiter. Ein fehlgeschlagener
-            // Update-Versuch darf die Wartung nie blockieren.
+            // Update-Versuch darf die Wartung nie blockieren - beim
+            // automatischen Start also stillschweigend.
+            if (!leise)
+            {
+                MessageBox.Show(
+                    besitzer,
+                    "Es konnte nicht nach Updates gesucht werden.\n\n" +
+                    $"Grund: {fehler.Message}\n\n" +
+                    $"Die installierte Version v{EigeneVersion.ToString(3)} läuft normal weiter.",
+                    "JustUpdate",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+
             return false;
         }
     }
