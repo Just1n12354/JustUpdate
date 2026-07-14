@@ -26,7 +26,7 @@
          durchgehende Reihe sieht: .ps1 2.7.6 -> .ps1 2.7.7 (Bruecke, migriert)
          -> EXE 2.7.8. Das Self-Update vergleicht diese Zahl mit dem tag_name
          des neuesten GitHub-Releases. -->
-    <Version>2.7.8.1</Version>
+    <Version>2.7.9</Version>
     <AssemblyTitle>JustUpdate</AssemblyTitle>
     <Product>JustUpdate</Product>
     <Company>Itin TechSolutions</Company>
@@ -44,6 +44,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- MUSS zusaetzlich zu <ApplicationIcon> hier stehen.
+         <ApplicationIcon> setzt nur das Symbol der EXE-Datei im Explorer.
+         Das Icon="justupdate.ico" der Fenster laedt die Datei zur Laufzeit als
+         WPF-Ressource - fehlt sie hier, wirft der XAML-Parser beim Start
+         IOException("Die Ressource justupdate.ico kann nicht gefunden werden")
+         und die App stirbt, BEVOR ein Fenster erscheint. Genau so ist v2.7.8.1
+         kaputt ausgeliefert worden. -->
+    <Resource Include="justupdate.ico" />
+
     <!-- Die Module werden REFERENZIERT, nicht kopiert. Aenderungen an
          Module\*.cs wirken sofort auch hier. -->
     <ProjectReference Include="..\JustUpdate\JustUpdate.csproj" />

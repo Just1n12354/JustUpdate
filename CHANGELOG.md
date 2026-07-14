@@ -1,14 +1,16 @@
 # JustUpdate — Changelog
 
-## v2.7.8.1 (14.07.2026)
-
-Erste Version, die sich über das Self-Update der neuen App verteilt — gleichzeitig
-der Test dafür.
+## v2.7.9 (14.07.2026)
 
 - **App-Symbol.** Das rote Quadrat mit dem weissen „J" liegt jetzt als echtes
   Programmsymbol vor und erscheint in Taskleiste, Startmenü und auf dem Desktop.
-- **Versionsanzeige korrigiert.** Die vierte Stelle wurde verschluckt: eine
-  Version 2.7.8.1 erschien im Fenster als „2.7.8".
+- **Versionsanzeige korrigiert.** Vierstellige Versionen wurden abgeschnitten und
+  erschienen im Fenster als dreistellige.
+
+> Zwischenstand v2.7.8.1 wurde zurückgezogen und nie an Kunden ausgeliefert: das
+> Symbol war zwar an der Programmdatei gesetzt, aber nicht als Ressource
+> eingebettet — die App stürzte beim Öffnen des Fensters ab, bevor überhaupt
+> etwas zu sehen war.
 
 ## v2.7.8 (14.07.2026)
 
