@@ -11,6 +11,11 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
+    <!-- Rotes Quadrat mit weissem J - dasselbe Zeichen wie in v1, dort zur
+         Laufzeit gemalt. Als .ico braucht es Windows fuer EXE, Taskleiste und
+         die Verknuepfungen, die die EXE-Migration umbiegt. -->
+    <ApplicationIcon>justupdate.ico</ApplicationIcon>
+
     <!-- MUSS JustUpdate.exe heissen: die EXE-Migration in v1 laedt genau
          diesen Dateinamen aus dem GitHub-Release und biegt die
          Verknuepfungen der Bestandskunden darauf um. -->

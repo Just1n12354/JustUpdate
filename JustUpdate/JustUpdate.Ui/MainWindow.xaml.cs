@@ -109,7 +109,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DataContext = this;
         xModule.ItemsSource = _module;
 
-        xVersion.Text = $"v{SelbstAktualisierung.EigeneVersion.ToString(3)}";
+        xVersion.Text = $"v{SelbstAktualisierung.VersionText}";
         xRechner.Text = Environment.MachineName;
 
         bool istAdministrator = IstAdministrator();

@@ -13,7 +13,7 @@ public partial class InfoFenster : Window
         xModule.ItemsSource = module;
 
         xKopf.Text =
-            $"JustUpdate v{SelbstAktualisierung.EigeneVersion.ToString(3)} führt Windows-Wartung " +
+            $"JustUpdate v{SelbstAktualisierung.VersionText} führt Windows-Wartung " +
             "mit Bordmitteln aus: winget, Windows Update, Defender, SFC und DISM. " +
             "Es installiert keine Fremdsoftware und ändert nichts an der Registry. " +
             "Jedes Modul lässt sich einzeln abschalten.";

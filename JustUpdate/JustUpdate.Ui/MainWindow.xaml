@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JustUpdate - Windows-Wartung"
         Width="1000" Height="680" MinWidth="820" MinHeight="560"
+        Icon="justupdate.ico"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" ResizeMode="CanResize"
         AllowsTransparency="True" Background="Transparent">

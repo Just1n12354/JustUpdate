@@ -50,7 +50,7 @@ public partial class ChangelogFenster : Window
 
         xUnterzeile.Text = "wird geladen ...";
         xQuelle.Text =
-            $"Installiert: v{SelbstAktualisierung.EigeneVersion.ToString(3)}  —  " +
+            $"Installiert: v{SelbstAktualisierung.VersionText}  —  " +
             "Quelle: github.com/Just1n12354/JustUpdate";
 
         Loaded += async (_, _) => await Laden();
@@ -139,7 +139,7 @@ public partial class ChangelogFenster : Window
             klient.DefaultRequestHeaders.UserAgent.Add(
                 new ProductInfoHeaderValue(
                     "JustUpdate",
-                    SelbstAktualisierung.EigeneVersion.ToString(3)));
+                    SelbstAktualisierung.VersionText));
 
             return await klient.GetStringAsync(ChangelogUrl);
         }
@@ -198,7 +198,7 @@ public partial class ChangelogFenster : Window
 
     private Border KarteBauen(Abschnitt abschnitt, out bool istAktuell)
     {
-        string eigene = "v" + SelbstAktualisierung.EigeneVersion.ToString(3);
+        string eigene = "v" + SelbstAktualisierung.VersionText;
 
         istAktuell = string.Equals(
             abschnitt.Version.TrimStart('v', 'V'),

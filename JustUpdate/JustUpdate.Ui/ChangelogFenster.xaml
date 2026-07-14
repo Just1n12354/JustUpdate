@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JustUpdate - Patch-Notes" Width="980" Height="700"
         MinWidth="720" MinHeight="500"
+        Icon="justupdate.ico"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent">
 

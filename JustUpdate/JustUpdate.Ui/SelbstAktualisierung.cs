@@ -34,6 +34,16 @@ internal static class SelbstAktualisierung
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
 
     /// <summary>
+    /// Versionstext fuer die Anzeige. NICHT einfach ToString(3): eine
+    /// Testversion 2.7.8.1 wuerde damit als "2.7.8" erscheinen - der Kunde
+    /// haette keine Chance zu sehen, welcher Stand wirklich laeuft.
+    /// </summary>
+    public static string VersionText =>
+        EigeneVersion.Revision > 0
+            ? EigeneVersion.ToString(4)
+            : EigeneVersion.ToString(3);
+
+    /// <summary>
     /// Prueft auf ein Update und installiert es nach Rueckfrage. Liefert true,
     /// wenn die App sich gerade beendet, weil der Nachfolger startet.
     ///
