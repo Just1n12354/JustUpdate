@@ -1,0 +1,252 @@
+<Window x:Class="JustUpdate.Ui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="JustUpdate - Windows-Wartung"
+        Width="1000" Height="680" MinWidth="820" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="CanResize"
+        AllowsTransparency="True" Background="Transparent">
+
+  <Border CornerRadius="16" Background="{StaticResource BgMain}"
+          BorderBrush="#0a0a10" BorderThickness="1.5">
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="50" ShadowDepth="0" Opacity="0.55" Color="#000" />
+    </Border.Effect>
+
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="42" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="28" />
+      </Grid.RowDefinitions>
+
+      <!-- TITELLEISTE -->
+      <Grid x:Name="xTitelleiste" Grid.Row="0" Margin="16,0" Background="Transparent"
+            MouseLeftButtonDown="TitelleisteGezogen">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Ellipse Width="10" Height="10" Fill="{StaticResource Acc}" Margin="0,0,8,0" />
+          <TextBlock Text="JustUpdate" FontSize="12" FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <TextBlock x:Name="xVersion" FontSize="11" Margin="7,0,0,0"
+                     VerticalAlignment="Center" Foreground="{StaticResource FgMute}" />
+        </StackPanel>
+
+        <DockPanel Grid.Column="1" LastChildFill="False">
+          <Button x:Name="xSchliessen" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="X" FontSize="12" Click="FensterSchliessen" />
+          <Button x:Name="xMaximieren" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="&#x2610;" FontSize="12" Click="FensterMaximieren" />
+          <Button x:Name="xMinimieren" DockPanel.Dock="Right" Style="{StaticResource Fenstertaste}"
+                  Content="_" FontSize="14" Click="FensterMinimieren" />
+        </DockPanel>
+      </Grid>
+
+      <!-- HAUPTBEREICH -->
+      <Grid Grid.Row="1" Margin="14,2,14,6">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" MinWidth="280" MaxWidth="390" />
+          <ColumnDefinition Width="12" />
+          <ColumnDefinition Width="2*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- LINKS: MODULE -->
+        <Border Grid.Column="0" Background="{StaticResource BgPanel}" CornerRadius="14"
+                BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+          <Grid Margin="14">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+              <TextBlock Text="Wartungsmodule" FontSize="14" FontWeight="SemiBold" />
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="xAlle" Content="alle" Click="AlleWaehlen"
+                        Style="{StaticResource Fenstertaste}" Width="34" Height="22"
+                        FontSize="10" Foreground="{StaticResource FgDim}" />
+                <Button x:Name="xKeine" Content="keine" Click="KeineWaehlen"
+                        Style="{StaticResource Fenstertaste}" Width="40" Height="22"
+                        FontSize="10" Foreground="{StaticResource FgDim}" />
+              </StackPanel>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+              <ItemsControl x:Name="xModule">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Background="{StaticResource BgCard}" CornerRadius="10"
+                            Padding="12,10" Margin="0,0,0,5"
+                            BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="28" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Text="{Binding Kuerzel}" Foreground="{Binding Farbe}"
+                                   FontSize="14" FontWeight="Bold" VerticalAlignment="Center" />
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="6,0,0,0">
+                          <TextBlock Text="{Binding Anzeige}" FontSize="12" />
+                          <TextBlock Text="{Binding Beschreibung}" FontSize="9.5"
+                                     Foreground="{StaticResource FgMute}"
+                                     TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                          <StackPanel VerticalAlignment="Center" Margin="0,0,8,0"
+                                      MinWidth="52">
+                            <TextBlock Text="{Binding Status}" FontSize="9.5"
+                                       FontWeight="SemiBold" HorizontalAlignment="Right">
+                              <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                  <Setter Property="Foreground" Value="{StaticResource FgMute}" />
+                                  <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Status}" Value="OK">
+                                      <Setter Property="Foreground" Value="{StaticResource Grn}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="WARNUNG">
+                                      <Setter Property="Foreground" Value="{StaticResource Amb}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="FEHLER">
+                                      <Setter Property="Foreground" Value="{StaticResource Rd}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Status}" Value="läuft">
+                                      <Setter Property="Foreground" Value="{StaticResource Acc}" />
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding Dauer}" FontSize="9"
+                                       Foreground="{StaticResource FgMute}"
+                                       HorizontalAlignment="Right" />
+                          </StackPanel>
+
+                          <ToggleButton Style="{StaticResource Schalter}"
+                                        IsChecked="{Binding Ausgewaehlt}"
+                                        VerticalAlignment="Center"
+                                        IsEnabled="{Binding DataContext.KannStarten,
+                                                    RelativeSource={RelativeSource AncestorType=Window}}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <Border Grid.Row="2" Background="{StaticResource BgTief}" CornerRadius="10"
+                    Padding="10" Margin="0,6,0,0"
+                    BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+              <StackPanel>
+                <TextBlock Text="SYSTEM" FontSize="10" FontWeight="SemiBold"
+                           Foreground="{StaticResource FgDim}" />
+                <TextBlock x:Name="xRechner" FontSize="9" Margin="0,3,0,0"
+                           Foreground="{StaticResource FgMute}" TextWrapping="Wrap" />
+                <TextBlock x:Name="xAdmin" FontSize="9" Margin="0,1,0,0"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Border>
+
+        <!-- RECHTS -->
+        <Grid Grid.Column="2">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0" CornerRadius="14" Margin="0,0,0,8" Padding="22,18"
+                  BorderBrush="{StaticResource Bdr}" BorderThickness="1">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#1a1018" Offset="0" />
+                <GradientStop Color="#241522" Offset="0.5" />
+                <GradientStop Color="#1a1018" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel>
+              <TextBlock Text="ITIN TECHSOLUTIONS" Foreground="{StaticResource Acc}"
+                         FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,3" />
+              <TextBlock Text="Windows-Wartung" FontSize="22" FontWeight="Bold" />
+              <TextBlock x:Name="xUnterzeile" FontSize="11.5" Margin="0,5,0,0"
+                         Foreground="{StaticResource FgDim}" TextWrapping="Wrap"
+                         Text="Wähle die Module und starte die Wartung. Jeder Lauf wird protokolliert." />
+            </StackPanel>
+          </Border>
+
+          <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="2*" />
+              <ColumnDefinition Width="6" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="6" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Button x:Name="xStart" Grid.Column="0" Content="WARTUNG STARTEN"
+                    Style="{StaticResource Starttaste}" Click="Starten" />
+            <Button x:Name="xAbbrechen" Grid.Column="2" Content="Abbrechen"
+                    Style="{StaticResource Stopptaste}" Click="Abbrechen" IsEnabled="False" />
+            <Button x:Name="xLogOeffnen" Grid.Column="4" Content="Logdatei"
+                    Style="{StaticResource Flachtaste}" Click="LogOeffnen" IsEnabled="False" />
+          </Grid>
+
+          <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <ProgressBar x:Name="xFortschritt" Style="{StaticResource Fortschritt}"
+                         Minimum="0" Maximum="1" Value="0" />
+
+            <Grid Grid.Row="1" Margin="0,5,0,0">
+              <TextBlock x:Name="xStatus" Text="Bereit." FontSize="10.5"
+                         Foreground="{StaticResource FgDim}" />
+              <TextBlock x:Name="xZeit" FontSize="10.5" HorizontalAlignment="Right"
+                         Foreground="{StaticResource FgMute}" />
+            </Grid>
+          </Grid>
+
+          <Border Grid.Row="3" Background="{StaticResource BgTief}" CornerRadius="14"
+                  BorderBrush="{StaticResource Bdr}" BorderThickness="1" MinHeight="200">
+            <Grid Margin="14">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+
+              <TextBlock Grid.Row="0" Text="Live-Log" FontSize="12" FontWeight="SemiBold"
+                         Margin="0,0,0,8" />
+
+              <TextBox x:Name="xLog" Grid.Row="1"
+                       Background="Transparent" Foreground="#b8b8d0"
+                       FontFamily="Consolas" FontSize="10.5"
+                       IsReadOnly="True" BorderThickness="0"
+                       VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+        </Grid>
+      </Grid>
+
+      <!-- FUSSZEILE -->
+      <TextBlock Grid.Row="2" Margin="20,0" VerticalAlignment="Center" FontSize="9"
+                 Foreground="{StaticResource FgMute}"
+                 Text="JustUpdate — Itin TechSolutions — info@itintechsolutions.ch" />
+    </Grid>
+  </Border>
+</Window>

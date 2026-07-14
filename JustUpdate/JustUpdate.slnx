@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="JustUpdate/JustUpdate.csproj" />
+  <Project Path="JustUpdate.Ui/JustUpdate.Ui.csproj" />
+</Solution>

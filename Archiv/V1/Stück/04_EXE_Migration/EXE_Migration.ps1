@@ -3,13 +3,15 @@
 # Holt die EXE aus dem GitHub-Release, legt sie in den App-Ordner, biegt
 # die Verknuepfungen um und startet die EXE. Einmalig (Marker-Datei).
 #
-# SICHERHEIT: standardmaessig AUS. Erst wenn eine (spaeter SIGNIERTE) EXE
-# bereit ist, wird scharf geschaltet via Umgebungsvariable
-#   JUSTUPDATE_MIGRATE_EXE = 1
-# So koennen wir die Mechanik testen, ohne Produktiv-Kunden anzufassen.
-# Die .ps1 bleibt liegen (Fallback) - die Migration ist reversibel.
+# v2.7.7: SCHARF. Die Nachfolge-EXE (C#/WPF, eigene Versionslinie ab 3.0.0)
+# liegt als Release-Asset JustUpdate.exe bereit und bringt ein eigenes
+# Self-Update mit - der Kunde bleibt also auch nach der Migration erreichbar.
+# Abschaltbar mit JUSTUPDATE_MIGRATE_EXE=0 (Notbremse, z.B. wenn ein
+# Virenscanner die EXE wegschnappt).
+# Die .ps1 bleibt liegen (Fallback) - die Migration ist reversibel, die
+# Marker-Datei .exe_migrated enthaelt den Rueckweg.
 # =====================================================================
-if (-not $isExe -and $env:JUSTUPDATE_MIGRATE_EXE -eq "1") {
+if (-not $isExe -and $env:JUSTUPDATE_MIGRATE_EXE -ne "0") {
     try {
         $appDir   = Split-Path -Parent $ScriptPath
         $exePath  = Join-Path $appDir "JustUpdate.exe"

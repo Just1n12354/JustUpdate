@@ -1,0 +1,14 @@
+# Build-Ausgaben
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Logs (JustUpdate schreibt nach %LOCALAPPDATA%, nicht ins Repo - aber sicher ist sicher)
+*.log
+
+# Auslieferungsartefakt (wird von veroeffentlichen.ps1 gebaut)
+dist/

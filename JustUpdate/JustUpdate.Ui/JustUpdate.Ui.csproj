@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe statt Exe: sonst haengt hinter dem Fenster ein schwarzes
+         Konsolenfenster. Die Konsolen-Variante bleibt daneben bestehen
+         (JustUpdateCli.exe), fuer geplante Laeufe ohne Oberflaeche. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- MUSS JustUpdate.exe heissen: die EXE-Migration in v1 laedt genau
+         diesen Dateinamen aus dem GitHub-Release und biegt die
+         Verknuepfungen der Bestandskunden darauf um. -->
+    <AssemblyName>JustUpdate</AssemblyName>
+    <RootNamespace>JustUpdate.Ui</RootNamespace>
+
+    <!-- Eigene Versionslinie: v1 (PowerShell) endet bei 2.7.7, dieser Nachfolger
+         beginnt bei 3.0.0. Das Self-Update vergleicht diese Zahl mit dem
+         tag_name des neuesten GitHub-Releases. -->
+    <Version>3.0.0</Version>
+    <AssemblyTitle>JustUpdate</AssemblyTitle>
+    <Product>JustUpdate</Product>
+    <Company>Itin TechSolutions</Company>
+
+    <!-- Kunden haben kein .NET-10-Desktop-Runtime. Die ausgelieferte EXE muss
+         alles mitbringen und aus EINER Datei bestehen - die EXE-Migration
+         kopiert genau eine Datei.
+         BEWUSST nur beim Publish, nicht hier als Projekt-Eigenschaft: sonst
+         zieht schon jeder "dotnet build" die kompletten Runtime-Packs. Die
+         Schalter stehen in veroeffentlichen.ps1. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Trimming ist bei WPF nicht unterstuetzt (Reflection auf XAML-Typen). -->
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Die Module werden REFERENZIERT, nicht kopiert. Aenderungen an
+         Module\*.cs wirken sofort auch hier. -->
+    <ProjectReference Include="..\JustUpdate\JustUpdate.csproj" />
+  </ItemGroup>
+
+</Project>

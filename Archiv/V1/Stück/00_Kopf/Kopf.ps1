@@ -1,4 +1,4 @@
-﻿# Version: 2.7.6
+﻿# Version: 2.7.7
 # Copyright (c) 2026 Itin TechSolutions / Justin Itin
 # Alle Rechte vorbehalten - info@itintechsolutions.ch
 # https://itintechsolutions.ch

@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Windows-only: WUA-COM, Defender-Cmdlets, winget, netsh, SFC/DISM.
+         Mit dem plattformneutralen net10.0 warnt der Compiler bei jedem
+         Windows-Aufruf (CA1416). -windows ist die ehrliche Angabe. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Die Konsolen-Variante heisst JustUpdateCli.exe, damit der Name
+         JustUpdate.exe fuer die Oberflaeche frei bleibt: die EXE-Migration in
+         v1 (04_EXE_Migration) laedt ein Release-Asset mit genau diesem Namen
+         und biegt die Verknuepfungen der Bestandskunden darauf um.
+         Die Konsolen-Variante bleibt fuer geplante Taeufe (Task Scheduler). -->
+    <AssemblyName>JustUpdateCli</AssemblyName>
+    <RootNamespace>JustUpdate</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Die Module und der Mitschnitt sind internal. Die Oberflaeche ruft sie
+         direkt auf, statt sie zu kopieren - so bleibt dieses Projekt die
+         einzige Quelle der Wartungslogik. -->
+    <InternalsVisibleTo Include="JustUpdate" />
+  </ItemGroup>
+
+</Project>
