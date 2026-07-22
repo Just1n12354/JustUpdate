@@ -16,14 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────────────────────────────────
+      # v1 — PowerShell (Kunden-Self-Update-Kanal)
+      # ─────────────────────────────────────────────────────────────────────────
+
       # Bewusst Windows PowerShell 5.1 ("powershell", nicht "pwsh"):
       # das ist die Umgebung, in der das Skript beim Kunden laeuft.
       - name: Skript-Checks (Parse, Versionen, Parser-Tests)
         shell: powershell
         run: .\tests\checks.ps1
 
-      # Nicht blockierend: liefert Hinweise, bricht den Build aber nicht ab.
-      # Auf blockierend stellen, sobald die Bestandsfindings abgearbeitet sind.
       - name: PSScriptAnalyzer (informativ)
         shell: powershell
         continue-on-error: true
@@ -31,3 +33,33 @@ jobs:
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
           Invoke-ScriptAnalyzer -Path .\MaintenanceProGUI_MODERN.ps1 -Severity Error,Warning |
             Format-Table RuleName, Severity, Line, Message -AutoSize | Out-String -Width 300
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # v2 — C# (moderner Wartungs-Motor)
+      # ─────────────────────────────────────────────────────────────────────────
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build v2 (JustUpdate CLI)
+        run: dotnet build JustUpdate/JustUpdate.sln --configuration Release
+
+      - name: Build v2 (WPF UI)
+        run: dotnet build JustUpdate/JustUpdate.Ui/JustUpdate.Ui.csproj --configuration Release
+
+      - name: Run tests
+        run: dotnet test JustUpdate/JustUpdate.Tests/JustUpdate.Tests.csproj --configuration Release --verbosity minimal
+
+      - name: Validate build artifacts
+        shell: pwsh
+        run: |
+          Write-Host "=== Build-Validierung ==="
+          $exe = Join-Path "JustUpdate" "JustUpdate" "bin" "Release" "net8.0" "win-x64" "JustUpdateCli.exe"
+          if (Test-Path $exe) {
+            Write-Host "✅ JustUpdateCli.exe gefunden ($(Get-Item $exe).Length bytes)"
+          } else {
+            Write-Error "❌ JustUpdateCli.exe nicht gefunden!"
+            exit 1
+          }
