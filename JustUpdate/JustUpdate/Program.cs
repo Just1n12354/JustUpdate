@@ -33,7 +33,7 @@ var moduleListe = new[]
 };
 
 // Standard-Module: aus config oder alles
-var standartModule = config.DefaultModule?.Length > 0
+var standardModule = config.DefaultModule?.Length > 0
     ? config.DefaultModule
     : moduleListe.Select(m => m.Name).ToArray();
 
@@ -87,7 +87,7 @@ if (optionen.TryGetValue("modules", out var moduleString))
 // Ohne Argumente: Standard-Module aus config oder alles
 if (moduleArgumente.Count == 0)
 {
-    moduleArgumente.AddRange(standartModule);
+    moduleArgumente.AddRange(standardModule);
 }
 
 if (moduleArgumente.Any(a => a is "alle" or "all"))
@@ -268,27 +268,6 @@ if (mitschnitt.NeustartErforderlich)
 // JSON-Metadaten für automatische Auswertung schreiben
 // ──────────────────────────────────────────────────────────────────────────────
 
-var metadaten = new Dictionary<string, object>
-{
-    ["version"] = config.Version ?? "unknown",
-    ["datum"] = DateTime.Now.ToString("o"),
-    ["rechner"] = Environment.MachineName,
-    ["benutzer"] = Environment.UserName,
-    ["administrator"] = istAdministrator,
-    ["dryrun"] = istDryRun,
-    ["module"] = auswahl.Select(m => m.Name).ToArray(),
-    ["ergebnisse"] = ergebnisse.Select(e => new Dictionary<string, object>
-    {
-        ["name"] = e.Name,
-        ["status"] = e.Status,
-        ["dauer"] = e.Dauer.TotalSeconds,
-        ["detail"] = e.Detail
-    }).ToArray(),
-    ["neustart_erforderlich"] = mitschnitt.NeustartErforderlich,
-    ["fehlerr"] = fehlerAnzahl,
-    ["warnungen"] = warnungAnzahl
-};
-
 string jsonPfad = Path.ChangeExtension(logDatei, ".json");
 
 try
@@ -299,28 +278,64 @@ try
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    string json = JsonSerializer.Serialize(metadaten, jsonOptionen);
+    var lauf = new Dictionary<string, object>
+    {
+        ["version"] = config.Version ?? "unknown",
+        ["datum"] = DateTime.Now.ToString("o"),
+        ["rechner"] = Environment.MachineName,
+        ["benutzer"] = Environment.UserName,
+        ["administrator"] = istAdministrator,
+        ["dryrun"] = istDryRun,
+        ["module"] = auswahl.Select(m => m.Name).ToArray(),
+        ["ergebnisse"] = ergebnisse.Select(e => new Dictionary<string, object>
+        {
+            ["name"] = e.Name,
+            ["status"] = e.Status,
+            ["dauer"] = e.Dauer.TotalSeconds,
+            ["detail"] = e.Detail
+        }).ToArray(),
+        ["neustart_erforderlich"] = mitschnitt.NeustartErforderlich,
+        ["fehler"] = fehlerAnzahl,
+        ["warnungen"] = warnungAnzahl
+    };
 
-    // Anhänngen an bestehende JSON-Datei (mehrere Läufe)
+    var eintraege = new List<Dictionary<string, object>> { lauf };
+
+    // Anhängen an bestehende JSON-Datei (mehrere Läufe)
     if (File.Exists(jsonPfad))
     {
-        var bestandeneEintraege = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
-            File.ReadAllText(jsonPfad)) ?? new List<Dictionary<string, object>>();
-
-        bestandeneEintraege.Add(metadaten.Cast<string, object>().ToDictionary(
-            kvp => kvp.Key, kvp => kvp.Value));
-
-        // Nur letzte 50 Einträge behalten (Platz nicht sprengen)
-        if (bestandeneEintraege.Count > 50)
+        try
         {
-            bestandeneEintraege = bestandeneEintraege.Skip(50).ToList();
-        }
+            var bestandeneEintraege = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(
+                File.ReadAllText(jsonPfad)) ?? new List<Dictionary<string, object>>();
 
-        File.WriteAllText(jsonPfad, JsonSerializer.Serialize(bestandeneEintraege, jsonOptionen));
+            bestandeneEintraege.Add(lauf);
+            eintraege = bestandeneEintraege;
+
+            // Nur letzte 50 Einträge behalten (Platz nicht sprengen)
+            if (eintraege.Count > 50)
+            {
+                eintraege = eintraege.Skip(eintraege.Count - 50).ToList();
+            }
+        }
+        catch
+        {
+            // Alte Datei war beschädigt — neu erstellen
+        }
     }
-    else
+
+    // Temporär schreiben + umbenennen = atomar
+    string tempPfad = jsonPfad + ".tmp";
+    try
     {
-        File.WriteAllText(jsonPfad, json);
+        File.WriteAllText(tempPfad, JsonSerializer.Serialize(eintraege, jsonOptionen));
+        File.Delete(jsonPfad);
+        File.Move(tempPfad, jsonPfad);
+    }
+    catch
+    {
+        // Wenn umbenennen fehlschlägt, temporäre Datei löschen
+        try { File.Delete(tempPfad); } catch { }
     }
 }
 catch (Exception ex)
@@ -361,7 +376,7 @@ return exitCode;
 
 static string Dauer(TimeSpan spanne) =>
     spanne.TotalMinutes >= 1
-        ? $"={(int)spanne.TotalMinutes:D2}:{spanne.Seconds:D2}"
+        ? $"{(int)spanne.TotalMinutes:D2}:{spanne.Seconds:D2}"
         : $"{spanne.TotalSeconds:F1}s";
 
 static void DruckenHilfe()
