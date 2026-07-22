@@ -1,0 +1,51 @@
+## Visual Studio / JetBrains
+[Oo]utput/
+[bB]in/
+Debug/
+Release/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## .NET
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## AppVeyor
+/appveyor.yml
+
+## MSTest
+Results/
+
+## Build configuration
+**/[Oo]utput/
+**/[bB]in/
+**/[bB]uild/
+**/[rR]elease*/
+**/*.pdb
+**/*.dll
+
+# User-specific
+*.rdUser
+*.testrunconfig
+*.vsp
+.vs/
+.vscode/
+
+# Logs
+JustUpdate/*/logs/
+*.log
+
+# JSON metadata (generated at runtime)
+*.json.tmp
+JustUpdate/**/*.json
+
+# JustUpdate config (contains system info)
+.justupdate.json
+
+# Nuget
+nuget.config
+*.nupkg
+nuget.*.nupkg.sha512

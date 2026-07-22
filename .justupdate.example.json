@@ -1,0 +1,10 @@
+{
+  "description": "JustUpdate Konfiguration - Standard-Module für Wartungsläufe",
+  "version": "2.7.9",
+  "defaultModules": [
+    "defender",
+    "windowsupdate",
+    "bereinigung",
+    "reparatur"
+  ]
+}

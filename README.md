@@ -104,17 +104,72 @@ und den Abschnitt in `CHANGELOG.md` ergänzen — das Self-Update vergleicht den
 > Quarantäne legen (in v1 für HP Wolf Security dokumentiert). Vor grösseren
 > Ausrollungen gehört hier eine Code-Signatur hin.
 
+## CLI-Optionen
+
+```
+JustUpdateCli.exe [--modules mod1,mod2] [--dry-run] [--help]
+```
+
+| Option | Wirkung |
+|---|---|
+| `--modules def,reparatur` | Nur diese Module ausführen |
+| `--dry-run` | Zeigen, was passieren würde — keine Änderungen |
+| `--help`, `-h`, `?` | Hilfe mit allen Modulen und Beschreibungen |
+| keine Option | Alle Module ausführen (oder `defaultModules` aus `.justupdate.json`) |
+
+## Konfiguration (`.justupdate.json`)
+
+```json
+{
+  "defaultModules": [
+    "defender",
+    "windowsupdate",
+    "bereinigung",
+    "reparatur"
+  ]
+}
+```
+
+Der Suchpfad: `<EXE-Verzeichnis>/.justupdate.json` und `%USERPROFILE%/.justupdate.json`.
+Ein Lauf ohne Admin-Rechte überspringt automatisch die Module, die Elevation brauchen.
+
+### JSON-Metadaten
+
+Jeder Lauf schreibt neben das Log-Datei eine `.json`-Metadaten-Datei
+(mehrere Läufe → Array, max. 50 Einträge). Nützlich für automatisierte Auswertung
+oder CI/CD-Gates.
+
 ## Entwickeln
 
 ```powershell
 cd JustUpdate
 dotnet build                                    # beide Projekte
-dotnet run --project JustUpdate -- bereinigung  # einzelnes Modul, ohne Oberfläche
+dotnet test                                     # Unit-Tests (Module-Discovery, Names, Descriptions)
+dotnet run --project JustUpdate -- bereinigung  # einzelnes Modul
+dotnet run --project JustUpdate -- --dry-run    # Dry-Run aller Module
 ```
 
 Die Module brauchen Administratorrechte (`app.manifest`). Ein Lauf ohne
 Elevation meldet das und überspringt die betroffenen Module.
 
 Jeder Lauf schreibt ein Protokoll nach
-`%LOCALAPPDATA%\JustUpdate\logs\Maintenance_<Zeitstempel>.log`.
+`%LOCALAPPDATA%\\JustUpdate\\logs\\Maintenance_<Zeitstempel>.log`
+sowie eine Metadaten-Datei `.json` daneben.
 Exit-Codes: `0` = OK, `1` = Warnungen, `2` = Fehler.
+
+## Architektur
+
+```
+JustUpdate/
+├── JustUpdate/          # Konsole: Motor + Module
+│   ├── Module/          # 9 Wartungsmodule (Defender, WindowsUpdate, …)
+│   ├── Infrastruktur/   # Mitschnitt-Log, PowerShellHelper
+│   └── Program.cs       # CLI, Logging, JSON-Metadaten
+├── JustUpdate.Tests/    # xUnit-Tests (Modul-Discovery)
+└── JustUpdate.Ui/       # WPF-Oberfläche (Kunden-EXE)
+```
+
+**PowerShellHelper** (`Infrastruktur/PowerShellHelper.cs`) kapselt die asynchrone
+PowerShell-Ausführung mit Timeout, Stream-Handling und UTF-8-Codierung.
+5 von 9 Modulen nutzen diese gemeinsame Funktion — kein duplizierter
+`ProcessStartInfo`/`BeginOutputReadLine`/`WaitForExit`-Code mehr.
