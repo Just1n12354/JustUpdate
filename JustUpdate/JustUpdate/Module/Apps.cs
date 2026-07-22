@@ -11,6 +11,7 @@ namespace JustUpdate.Module;
 internal static class Apps
 {
     public const string Name = "apps";
+    public const string Schnellbeschreibung = "Apps über Winget aktualisieren";
 
     private static readonly TimeSpan QuellenTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan UpgradeTimeout = TimeSpan.FromMinutes(60);

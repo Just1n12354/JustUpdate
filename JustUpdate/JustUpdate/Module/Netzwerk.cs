@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class Netzwerk
 {
     public const string Name = "netzwerk";
+    public const string Schnellbeschreibung = "Netzwerk zurücksetzen";
 
     public static void Ausfuehren()
     {

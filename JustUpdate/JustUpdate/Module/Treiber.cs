@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class Treiber
 {
     public const string Name = "treiber";
+    public const string Schnellbeschreibung = "Treiber-Updates installieren";
 
     public static void Ausfuehren()
     {

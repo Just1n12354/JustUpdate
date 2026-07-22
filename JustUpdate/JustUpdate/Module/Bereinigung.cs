@@ -8,6 +8,7 @@ namespace JustUpdate.Module;
 internal static class Bereinigung
 {
     public const string Name = "bereinigung";
+    public const string Schnellbeschreibung = "Temp-Dateien bereinigen";
 
     private const int MaximalesAlterInTagen = 7;
 

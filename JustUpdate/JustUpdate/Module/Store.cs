@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class Store
 {
     public const string Name = "store";
+    public const string Schnellbeschreibung = "Store-Apps aktualisieren";
 
     public static void Ausfuehren()
     {

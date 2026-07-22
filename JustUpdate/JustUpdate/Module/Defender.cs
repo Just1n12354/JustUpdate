@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class Defender
 {
     public const string Name = "defender";
+    public const string Schnellbeschreibung = "Defender-Signaturen aktualisieren";
 
     public static void Ausfuehren()
     {

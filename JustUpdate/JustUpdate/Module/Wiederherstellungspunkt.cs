@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class Wiederherstellungspunkt
 {
     public const string Name = "wiederherstellungspunkt";
+    public const string Schnellbeschreibung = "Wiederherstellungspunkt erstellen";
 
     public static void Ausfuehren()
     {

@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class SystemReparatur
 {
     public const string Name = "reparatur";
+    public const string Schnellbeschreibung = "SFC/DISM-Systemdateien prüfen";
 
     public static void Ausfuehren()
     {

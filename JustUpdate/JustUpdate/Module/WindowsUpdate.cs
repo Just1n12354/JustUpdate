@@ -13,6 +13,7 @@ namespace JustUpdate.Module;
 internal static class WindowsUpdate
 {
     public const string Name = "windowsupdate";
+    public const string Schnellbeschreibung = "Windows-Updates installieren";
 
     public static void Ausfuehren()
     {
