@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
+using JustUpdate.Infrastruktur;
 
 namespace JustUpdate.Module;
 
@@ -425,84 +421,35 @@ internal static class Store
 
         try
         {
-            var startInfo =
-                new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
-                    StandardErrorEncoding = System.Text.Encoding.UTF8
-                };
+            // 60 Minuten Timeout — Store-Updates konnen bei grossen App-Updates
+            // mehrere Minuten dauern.
+            var erfolgreich = PowerShellHelper.Ausfuehren(script, 3600, out var ausgabe, out var fehler, out var exitCode, out var timedOut);
 
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
-
-            using var process =
-                new System.Diagnostics.Process
-                {
-                    StartInfo = startInfo
-                };
-
-            process.OutputDataReceived += (_, eventArgs) =>
-            {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (_, eventArgs) =>
-            {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            if (!process.Start())
+            if (!erfolgreich)
             {
                 Console.WriteLine(
                     "[FEHLER] PowerShell konnte nicht gestartet werden.");
                 return;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            bool abgeschlossen =
-                process.WaitForExit(3_600_000);
-
-            if (!abgeschlossen)
+            if (timedOut)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Der Prozess wurde möglicherweise bereits beendet.
-                }
-
                 Console.WriteLine(
                     "[FEHLER] Die Store-Aktualisierung wurde nach 60 Minuten abgebrochen.");
                 return;
             }
 
-            process.WaitForExit();
+            if (!string.IsNullOrWhiteSpace(ausgabe))
+            {
+                Console.WriteLine(ausgabe.Trim());
+            }
 
-            if (process.ExitCode == 0)
+            if (exitCode == 0)
             {
                 Console.WriteLine(
                     "[OK] Microsoft-Store-Modul abgeschlossen.");
             }
-            else if (process.ExitCode == 2)
+            else if (exitCode == 2)
             {
                 Console.WriteLine(
                     "[WARNUNG] Microsoft-Store-Modul mit Warnungen abgeschlossen.");

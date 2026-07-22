@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
+using JustUpdate.Infrastruktur;
 
 namespace JustUpdate.Module;
 
@@ -380,95 +376,42 @@ internal static class WindowsUpdate
 
         try
         {
-            var startInfo =
-                new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
-                    StandardErrorEncoding = System.Text.Encoding.UTF8
-                };
+            // 2 Stunden Timeout — IUpdateDownloader.Download() und
+            // IUpdateInstaller.Install() sind synchrone COM-Aufrufe ohne
+            // Timeout. Haengt der Windows-Update-Dienst wartet die Wartung
+            // sonst ewig. 2 Stunden decken auch grosse Feature-Updates ab.
+            var erfolgreich = PowerShellHelper.Ausfuehren(script, 7200, out var ausgabe, out var fehler, out var exitCode, out var timedOut);
 
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
-
-            using var process =
-                new System.Diagnostics.Process
-                {
-                    StartInfo = startInfo
-                };
-
-            process.OutputDataReceived += (_, eventArgs) =>
+            if (!erfolgreich)
             {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (_, eventArgs) =>
-            {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            if (!process.Start())
-            {
-                Console.WriteLine(
-                    "[FEHLER] PowerShell konnte nicht gestartet werden.");
+                Console.WriteLine("[FEHLER] PowerShell konnte nicht gestartet werden.");
                 return;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            // IUpdateDownloader.Download() und IUpdateInstaller.Install() sind
-            // synchrone COM-Aufrufe ohne Timeout. Haengt der Windows-Update-Dienst
-            // (klassisch nach einem abgebrochenen Update), wartet die Wartung sonst
-            // bis in alle Ewigkeit. 2 Stunden decken auch grosse Feature-Updates ab.
-            if (!process.WaitForExit(120 * 60 * 1000))
+            if (timedOut)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Prozess war bereits beendet.
-                }
-
                 Console.WriteLine(
                     "[FEHLER] Zeitlimit: Windows Update wurde nach 2 Stunden " +
                     "abgebrochen. Der Windows-Update-Dienst haengt vermutlich.");
-
                 return;
             }
 
-            process.WaitForExit();
-
-            if (process.ExitCode == 0)
+            if (!string.IsNullOrWhiteSpace(ausgabe))
             {
-                Console.WriteLine(
-                    "[OK] Windows-Update-Modul abgeschlossen.");
+                Console.WriteLine(ausgabe.Trim());
             }
-            else if (process.ExitCode == 2)
+
+            if (exitCode == 0)
             {
-                Console.WriteLine(
-                    "[WARNUNG] Windows-Update-Modul mit Warnungen abgeschlossen.");
+                Console.WriteLine("[OK] Windows-Update-Modul abgeschlossen.");
+            }
+            else if (exitCode == 2)
+            {
+                Console.WriteLine("[WARNUNG] Windows-Update-Modul mit Warnungen abgeschlossen.");
             }
             else
             {
-                Console.WriteLine(
-                    "[FEHLER] Windows-Update-Modul ist fehlgeschlagen.");
+                Console.WriteLine("[FEHLER] Windows-Update-Modul ist fehlgeschlagen.");
             }
         }
         catch (Exception fehler)
@@ -476,4 +419,5 @@ internal static class WindowsUpdate
             Console.WriteLine("[FEHLER] " + fehler.Message);
         }
     }
+}
 }

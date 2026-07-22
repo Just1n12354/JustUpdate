@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
+using JustUpdate.Infrastruktur;
 
 namespace JustUpdate.Module;
 
@@ -94,89 +90,35 @@ internal static class Wiederherstellungspunkt
 
         try
         {
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                // Fehlte hier als einzigem Modul - ohne UTF-8 kommen die Umlaute
-                // aus dem PowerShell-Skript verstuemmelt zurueck.
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
+            // 10 Minuten Timeout — Checkpoint-Computer kann bei kaputtem VSS ewig hangen
+            var erfolgreich = PowerShellHelper.Ausfuehren(script, 600, out var ausgabe, out var fehler, out var exitCode, out var timedOut);
 
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
-
-            var ausgabe = new StringBuilder();
-            var fehlerAusgabe = new StringBuilder();
-
-            using var process =
-                new System.Diagnostics.Process { StartInfo = startInfo };
-
-            // ReadToEnd() blockiert ohne Zeitlimit: haengt Checkpoint-Computer
-            // (kaputtes VSS, blockierter Volumeschattenkopie-Dienst), haengt die
-            // gesamte Wartung fuer immer. Darum asynchron lesen + Zeitlimit.
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data != null)
-                {
-                    lock (ausgabe) { ausgabe.AppendLine(e.Data); }
-                }
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data != null)
-                {
-                    lock (fehlerAusgabe) { fehlerAusgabe.AppendLine(e.Data); }
-                }
-            };
-
-            if (!process.Start())
+            if (!erfolgreich)
             {
                 Console.WriteLine("[FEHLER] PowerShell konnte nicht gestartet werden.");
                 return;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            if (!process.WaitForExit(10 * 60 * 1000))
+            if (timedOut)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Prozess war bereits beendet.
-                }
-
                 Console.WriteLine(
                     "[FEHLER] Zeitlimit: Der Wiederherstellungspunkt wurde nach " +
-                    "10 Minuten abgebrochen. Pruefe den Dienst " +
+                    "10 Minuten abgebrochen. Prüfe den Dienst " +
                     "\"Volumeschattenkopie\" (VSS).");
-
                 return;
             }
 
-            process.WaitForExit();
-
-            if (process.ExitCode == 0)
+            if (exitCode == 0)
             {
-                Console.WriteLine("[OK] " + ausgabe.ToString().Trim());
+                Console.WriteLine("[OK] " + ausgabe.Trim());
             }
             else
             {
                 Console.WriteLine("[FEHLER] Wiederherstellungspunkt fehlgeschlagen.");
-                Console.WriteLine(fehlerAusgabe.ToString().Trim());
+                if (!string.IsNullOrWhiteSpace(fehler))
+                {
+                    Console.WriteLine(fehler.Trim());
+                }
             }
         }
         catch (Exception fehler)

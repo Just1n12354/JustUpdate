@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
+using JustUpdate.Infrastruktur;
 
 namespace JustUpdate.Module;
 
@@ -474,86 +470,37 @@ internal static class Treiber
 
         try
         {
-            var startInfo =
-                new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
-                    StandardErrorEncoding = System.Text.Encoding.UTF8
-                };
+            // 60 Minuten Timeout — Gleiche Falle wie bei Windows Update:
+            // die WUA-COM-Aufrufe konnen unbegrenzt hangen. Ein Treiberpaket
+            // ist selten gross - 60 Minuten sind reichlich.
+            var erfolgreich = PowerShellHelper.Ausfuehren(script, 3600, out var ausgabe, out var fehler, out var exitCode, out var timedOut);
 
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
-
-            using var process =
-                new System.Diagnostics.Process
-                {
-                    StartInfo = startInfo
-                };
-
-            process.OutputDataReceived += (_, eventArgs) =>
-            {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (_, eventArgs) =>
-            {
-                if (!string.IsNullOrWhiteSpace(eventArgs.Data))
-                {
-                    Console.WriteLine(eventArgs.Data);
-                }
-            };
-
-            if (!process.Start())
+            if (!erfolgreich)
             {
                 Console.WriteLine(
                     "[FEHLER] PowerShell konnte nicht gestartet werden.");
                 return;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            // Gleiche Falle wie bei Windows Update: die WUA-COM-Aufrufe koennen
-            // unbegrenzt haengen. Ein Treiberpaket ist selten gross - 60 Minuten
-            // sind reichlich.
-            if (!process.WaitForExit(60 * 60 * 1000))
+            if (timedOut)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Prozess war bereits beendet.
-                }
-
                 Console.WriteLine(
                     "[FEHLER] Zeitlimit: Die Treibersuche wurde nach 60 Minuten " +
                     "abgebrochen.");
-
                 return;
             }
 
-            process.WaitForExit();
+            if (!string.IsNullOrWhiteSpace(ausgabe))
+            {
+                Console.WriteLine(ausgabe.Trim());
+            }
 
-            if (process.ExitCode == 0)
+            if (exitCode == 0)
             {
                 Console.WriteLine(
                     "[OK] Treiber-Modul erfolgreich abgeschlossen.");
             }
-            else if (process.ExitCode == 2)
+            else if (exitCode == 2)
             {
                 Console.WriteLine(
                     "[WARNUNG] Treiber-Modul mit Warnungen abgeschlossen.");

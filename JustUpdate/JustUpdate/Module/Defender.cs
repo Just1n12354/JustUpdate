@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
+using JustUpdate.Infrastruktur;
 
 namespace JustUpdate.Module;
 
@@ -223,90 +219,33 @@ internal static class Defender
 
         try
         {
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
+            // 20 Minuten Timeout — Update-MpSignature kann bei blockiertem
+            // Defender-Dienst oder toter Netzwerkverbindung ewig hangen.
+            // Ein Signatur-Update dauert normalerweise unter einer Minute.
+            var erfolgreich = PowerShellHelper.Ausfuehren(script, 1200, out var ausgabeText, out var fehlerText, out var exitCode, out var timedOut);
 
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-NonInteractive");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-Command");
-            startInfo.ArgumentList.Add(script);
-
-            var ausgabe = new StringBuilder();
-            var fehlerAusgabe = new StringBuilder();
-
-            using var process =
-                new System.Diagnostics.Process { StartInfo = startInfo };
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data != null)
-                {
-                    lock (ausgabe) { ausgabe.AppendLine(e.Data); }
-                }
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data != null)
-                {
-                    lock (fehlerAusgabe) { fehlerAusgabe.AppendLine(e.Data); }
-                }
-            };
-
-            if (!process.Start())
+            if (!erfolgreich)
             {
                 Console.WriteLine("[FEHLER] PowerShell konnte nicht gestartet werden.");
                 return;
             }
 
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            // Update-MpSignature haengt bei blockiertem Defender-Dienst oder
-            // toter Netzwerkverbindung unbegrenzt. 20 Minuten sind grosszuegig -
-            // ein Signatur-Update dauert normalerweise unter einer Minute.
-            if (!process.WaitForExit(20 * 60 * 1000))
+            if (timedOut)
             {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Prozess war bereits beendet.
-                }
-
                 Console.WriteLine(
                     "[FEHLER] Zeitlimit: Das Defender-Update wurde nach " +
                     "20 Minuten abgebrochen.");
-
                 return;
             }
-
-            process.WaitForExit();
-
-            string ausgabeText = ausgabe.ToString();
 
             if (!string.IsNullOrWhiteSpace(ausgabeText))
             {
                 Console.WriteLine(ausgabeText.Trim());
             }
 
-            if (process.ExitCode != 0)
+            if (exitCode != 0)
             {
                 Console.WriteLine("[FEHLER] Microsoft Defender konnte nicht aktualisiert werden.");
-
-                string fehlerText = fehlerAusgabe.ToString();
 
                 if (!string.IsNullOrWhiteSpace(fehlerText))
                 {
